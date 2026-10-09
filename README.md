@@ -1,4 +1,4 @@
-# PortalX Android (v0.7.1)
+# PortalX Android (v0.8.0)
 
 Fully native Android client for PortalX, talking only to the PortalX Mobile Gateway v1 REST API (bearer token). No WebView, no browser hand-offs. Kotlin + Jetpack Compose (Material 3), minSdk 26, targetSdk 35.
 
@@ -15,10 +15,14 @@ Fully native Android client for PortalX, talking only to the PortalX Mobile Gate
   | `:core:ui` | Theme, shared components and controls, `ResourceViewModel`, `AppViewModel`, fonts and logos |
   | `:feature:auth` | Sign-in |
   | `:feature:today` | Home and attendance (selfie capture) |
-  | `:feature:work` | Tasks and leave |
+  | `:feature:work` | Tasks, leave and the approvals inbox |
   | `:feature:workspace` | More, people, calendar, announcements, meetings, admin screens |
-  | `:app` | Activity shell, navigation, Hilt wiring, integration tests |
+  | `:app` | Activity shell, navigation, Hilt wiring, push (`push/`), home-screen widget (`widget/`), integration tests |
 
   Features depend only on `:core:ui` (never on each other). Screens read typed models: `rememberResource(Endpoint.Tasks)` gives `List<Task>`, so a renamed field is a compile error rather than a blank label.
+- v0.8:
+  - **Push alerts (FCM).** Drop your Firebase project's `google-services.json` into `app/` (git-ignored) and rebuild; without it push is simply off. After sign-in the app registers its token with `POST notifications/device-token` and asks for the Android 13+ notification permission. The gateway should send **data** messages: `type` (`leave_request`, `correction_request`, `approval_*`, `task_*`, `leave_*`, `attendance_*`, `announcement_*`, `meeting_*`), `title`, `body`, optional `id` and `route`. Tapping opens the matching screen (routes are allowlisted). Lock-screen content stays hidden.
+  - **Approvals inbox.** Pending leave and attendance corrections in one list, oldest first, with Approve/Reject. Reached from Home and More.
+  - **Home-screen widget.** "PortalX Today": attendance status, open tasks and approvals waiting. Reads only the on-device cache, never the network; shows nothing personal when signed out.
 - Tests: `./gradlew :app:testDebugUnitTest` (Robolectric; Room tests use the bundled JVM SQLite driver so they run on aarch64 hosts too).
 - Reports: `PortalX-Audit-v0.2.0.pdf`, `PortalX-Value-Report-v0.3.0.pdf`

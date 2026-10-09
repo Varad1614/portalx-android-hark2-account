@@ -129,7 +129,7 @@ enum class Fn(val m: M, val path: String, val multipart: Boolean = false) {
     Notifications(M.GET, "notifications"),
     MarkNotificationRead(M.POST, "notifications/{id}/read"),
     MarkAllNotificationsRead(M.POST, "notifications/read-all"),
-    /** v0.6 plumbing only (FCM arrives in v0.8): {token, platform:"android", deviceId}. */
+    /** v0.8 FCM registration: {token, platform:"android", deviceId}. */
     DeviceToken(M.POST, "notifications/device-token"),
     /** {deviceId}; called on logout. */
     DeviceTokenRemove(M.POST, "notifications/device-token/remove"),

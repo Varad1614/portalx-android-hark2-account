@@ -20,5 +20,6 @@ class PortalXApp : Application(), RepoHost {
         super.onCreate()
         // Anything queued before the process died is sent once a network is available.
         OutboxWorker.schedule(this)
+        com.pravahax.portalx.push.Push.createChannels(this)
     }
 }

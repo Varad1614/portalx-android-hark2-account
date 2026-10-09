@@ -94,12 +94,12 @@ fun HomeScreen(user: SessionUser, navigate: (String) -> Unit) {
                 if (user.canApproveLeave) {
                     val pl = pendLeave.data.orEmpty()
                     add(Stat("pending_leaves", "Pending leaves", n(pendLeave, pl.size), Icons.Outlined.PendingActions, pl.isNotEmpty(),
-                        rows = pl.map { (it.name ?: "Member") to listOfNotNull(it.type, fmtShortDate(it.startDate)).joinToString(" · ") }, nav = "leave"))
+                        rows = pl.map { (it.name ?: "Member") to listOfNotNull(it.type, fmtShortDate(it.startDate)).joinToString(" · ") }, nav = "approvals"))
                 }
                 if (user.canApproveCorrections) {
                     val pc = pendCorr.data.orEmpty()
                     add(Stat("pending_corrections", "Pending corrections", n(pendCorr, pc.size), Icons.Outlined.EditCalendar, pc.isNotEmpty(),
-                        rows = pc.map { (it.name ?: "Member") to fmtShortDate(it.date) }, nav = "attendance"))
+                        rows = pc.map { (it.name ?: "Member") to fmtShortDate(it.date) }, nav = "approvals"))
                 }
                 if (user.can("projects.read")) {
                     val ap = projects.data.orEmpty().filter { isActiveProject(it.status) }
@@ -115,10 +115,11 @@ fun HomeScreen(user: SessionUser, navigate: (String) -> Unit) {
                     }
                 }
             }
-            val n = pendLeave.data.orEmpty().size
-            if (user.canApproveLeave && n > 0) item(key = "appr") {
-                FilledTonalButton(onClick = { navigate("leave") }, modifier = Modifier.fillMaxWidth().height(48.dp), shape = MaterialTheme.shapes.medium) {
-                    Icon(Icons.Outlined.Inbox, null); Spacer(Modifier.width(Space.sm)); Text("Review $n leave request${if (n > 1) "s" else ""}")
+            // v0.8: one button into the approvals inbox (leave + corrections).
+            val n = com.pravahax.portalx.data.model.ApprovalItem.inbox(pendLeave.data.orEmpty(), pendCorr.data.orEmpty()).size
+            if (n > 0) item(key = "appr") {
+                FilledTonalButton(onClick = { navigate("approvals") }, modifier = Modifier.fillMaxWidth().height(48.dp), shape = MaterialTheme.shapes.medium) {
+                    Icon(Icons.Outlined.Inbox, null); Spacer(Modifier.width(Space.sm)); Text("Review $n approval${if (n > 1) "s" else ""}")
                 }
             }
         }

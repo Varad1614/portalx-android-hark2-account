@@ -8,6 +8,9 @@ plugins {
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
 }
+// v0.8 FCM: Firebase is configured only when app/google-services.json exists (kept out of git). Without it the app
+// builds and runs normally and push stays off.
+if (file("google-services.json").exists()) apply(plugin = "com.google.gms.google-services")
 val ksProps = Properties().also { p -> rootProject.file("keystore.properties").inputStream().use { p.load(it) } }
 
 android {
@@ -18,8 +21,8 @@ android {
         applicationId = "com.pravahax.portalx.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.7.1"
+        versionCode = 13
+        versionName = "0.8.0"
     }
     signingConfigs {
         create("release") {
@@ -68,6 +71,9 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // v0.8: push alerts.
+    implementation(platform("com.google.firebase:firebase-bom:33.4.0"))
+    implementation("com.google.firebase:firebase-messaging")
     // Hilt (DI) stays in the app module; Room and WorkManager come from :core:data.
     implementation("com.google.dagger:hilt-android:2.52")
     ksp("com.google.dagger:hilt-compiler:2.52")

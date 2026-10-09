@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- v0.8: push alerts (FCM). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- v0.6: one best-effort fix attached to check-in/out (foreground only, never required). -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -45,6 +47,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- v0.8: FCM alerts. Inert unless the build had app/google-services.json. -->
+        <service android:name=".push.PortalMessagingService" android:exported="false">
+            <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter>
+        </service>
+        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="general" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_portalx" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/brand_gold" />
+        <!-- v0.8: home-screen widget (reads the on-device cache only). -->
+        <receiver android:name=".widget.TodayWidget" android:exported="true" android:label="PortalX Today">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_today_info" />
+        </receiver>
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"

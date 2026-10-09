@@ -291,3 +291,32 @@ data class OrgSettings(val name: String?, val legalName: String?, val workspaceS
         }
     }
 }
+
+// ---------------- approvals inbox (v0.8) ----------------
+/** One item a manager can approve or reject: a pending leave request or attendance correction, in one list. */
+data class ApprovalItem(
+    val kind: Kind, val id: JsonPrimitive?, override val key: String?, val name: String, val type: String?,
+    val startDate: String?, val endDate: String?, val days: Double?, val checkIn: String?, val checkOut: String?, val note: String?,
+) : Keyed {
+    enum class Kind(val fn: com.pravahax.portalx.net.Fn, val label: String) {
+        Leave(com.pravahax.portalx.net.Fn.DecideLeave, "Leave"),
+        Correction(com.pravahax.portalx.net.Fn.DecideCorrection, "Correction"),
+    }
+    /** One in-flight key per item for both decisions, so Approve and Reject can't race each other. */
+    val actionKey get() = "${kind.name}-${id?.content ?: key}"
+    fun decision(approve: Boolean): com.pravahax.portalx.data.DecisionRequest? =
+        id?.let { com.pravahax.portalx.data.DecisionRequest(it, if (approve) "approved" else "rejected") }
+
+    companion object {
+        /** Pending items only, oldest first (FIFO), undated last. Keys are prefixed by kind so ids never collide. */
+        fun inbox(leave: List<LeaveRequest>, corrections: List<Correction>): List<ApprovalItem> {
+            val l = leave.filter { it.status == null || it.status.equals("pending", true) }.map {
+                ApprovalItem(Kind.Leave, it.id, it.key?.let { k -> "leave:$k" }, it.name ?: "Member", it.type, it.startDate, it.endDate, it.days, null, null, it.reason)
+            }
+            val c = corrections.filter { it.status.equals("pending", true) }.map {
+                ApprovalItem(Kind.Correction, it.id, it.key?.let { k -> "corr:$k" }, it.name ?: "Member", null, it.date, null, null, it.checkIn, it.checkOut, it.note)
+            }
+            return (l + c).sortedBy { com.pravahax.portalx.data.Dates.day(it.startDate)?.toEpochDay() ?: Long.MAX_VALUE }
+        }
+    }
+}

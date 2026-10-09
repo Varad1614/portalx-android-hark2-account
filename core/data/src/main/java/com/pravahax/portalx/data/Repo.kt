@@ -354,7 +354,7 @@ class Repo(
     /** Rotates the session token when it's close to expiry (see PortalApi.refreshIfNeeded). */
     suspend fun refreshSession(): RefreshResult = api.refreshIfNeeded()
 
-    /** v0.8 (FCM) will call this with the real registration token. Nothing calls it in v0.6. */
+    /** v0.8: called with the FCM registration token after sign-in and whenever Firebase rotates it. */
     suspend fun registerDeviceToken(token: String) {
         api.call(Fn.DeviceToken, buildJsonObject { put("token", token); put("platform", "android"); put("deviceId", api.deviceId) })
     }

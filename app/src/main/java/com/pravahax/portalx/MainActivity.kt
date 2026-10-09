@@ -90,6 +90,7 @@ class MainActivity : ComponentActivity() {
         )
         // Privacy: the recents/overview thumbnail is blanked (attendance, directory phone numbers, etc. stay private).
         if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false)
+        com.pravahax.portalx.push.DeepLink.offer(intent)
         val reduceMotion = reduceMotion()
         setContent {
             PortalTheme {
@@ -103,6 +104,18 @@ class MainActivity : ComponentActivity() {
         // Check out / Approve / Sign in). Applied to the root so every button in the window is protected.
         window.decorView.filterTouchesWhenObscured = true
         findViewById<android.view.View>(android.R.id.content)?.filterTouchesWhenObscured = true
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        com.pravahax.portalx.push.DeepLink.offer(intent)
+    }
+
+    // v0.8: the widget shows what this session just loaded.
+    override fun onStop() {
+        super.onStop()
+        com.pravahax.portalx.widget.TodayWidget.refresh(this)
     }
 }
 
@@ -197,7 +210,7 @@ private val titles = mapOf(
     "home" to "", "attendance" to "Attendance", "tasks" to "Tasks", "calendar" to "Calendar", "more" to "More",
     "leave" to "Leave", "meetings" to "Meetings", "announcements" to "Announcements", "directory" to "Directory", "profile" to "Profile", "password" to "Security",
     "notifications" to "Notifications", "projects" to "Projects", "documents" to "Documents", "performance" to "Performance", "teams" to "Teams",
-    "users" to "Users", "access" to "Access control", "audit" to "Audit logs", "settings" to "Company settings",
+    "users" to "Users", "access" to "Access control", "approvals" to "Approvals", "audit" to "Audit logs", "settings" to "Company settings",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -222,6 +235,24 @@ private fun MainShell(user: SessionUser, online: Boolean, refreshMe: suspend () 
         } else nav.navigate(r) { launchSingleTop = true }
     }
     val askLogout = { confirmLogout = true }
+
+    // v0.8: register for push once per signed-in user, ask for the Android 13+ notification permission, and
+    // follow a tapped notification's deep link (allowlisted in Push.ROUTES; approvals only for approvers).
+    val ctx = LocalContext.current
+    val repo = LocalRepo.current
+    val notifPermission = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(user.userId) {
+        com.pravahax.portalx.push.Push.register(ctx, repo)
+        if (Build.VERSION.SDK_INT >= 33 && com.pravahax.portalx.push.Push.available(ctx) &&
+            androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+    }
+    val deepLink by com.pravahax.portalx.push.DeepLink.route.collectAsState()
+    LaunchedEffect(deepLink) {
+        val r = deepLink ?: return@LaunchedEffect
+        com.pravahax.portalx.push.DeepLink.consume()
+        go(if (r == "approvals" && !(user.canApproveLeave || user.canApproveCorrections)) "notifications" else r)
+    }
 
     CompositionLocalProvider(LocalSnackbar provides snackbar, LocalOnline provides online) {
         Scaffold(
@@ -301,6 +332,7 @@ private fun MainShell(user: SessionUser, online: Boolean, refreshMe: suspend () 
                 composable("calendar") { CalendarScreen() }
                 composable("more") { MoreScreen(user, ::go, askLogout, refreshMe) }
                 composable("leave") { LeaveScreen(user, applyLeave) { applyLeave = false } }
+                composable("approvals") { ApprovalsScreen(user) }
                 composable("meetings") { MeetingsScreen() }
                 composable("announcements") { AnnouncementsScreen() }
                 composable("directory") { DirectoryScreen { person = it } }
