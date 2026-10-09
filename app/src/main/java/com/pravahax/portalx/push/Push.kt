@@ -88,13 +88,14 @@ object DeepLink {
  * `notification` block as a fallback. Returns null when there is nothing to show.
  */
 data class PushMessage(val title: String, val body: String, val channel: Channel, val route: String, val tag: String) {
-    enum class Channel(val id: String, val title: String) { Approvals("approvals", "Approvals"), Tasks("tasks", "Tasks"), General("general", "Updates") }
+    enum class Channel(val id: String, val title: String) { Approvals("approvals", "Approvals"), Tasks("tasks", "Tasks"), General("general", "Updates"), Reminders("reminders", "Reminders") }
 
     /** Cached screens to re-read next time they are shown. */
     val stale: List<Fn> get() = when (channel) {
         Channel.Approvals -> listOf(Fn.PendingLeaveApprovals, Fn.Corrections, Fn.MyLeave, Fn.AttendanceToday, Fn.Notifications)
         Channel.Tasks -> listOf(Fn.Tasks, Fn.Notifications)
         Channel.General -> listOf(Fn.Notifications, Fn.Announcements)
+        Channel.Reminders -> listOf(Fn.AttendanceToday, Fn.Meetings)
     }
 
     companion object {

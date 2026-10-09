@@ -21,5 +21,7 @@ class PortalXApp : Application(), RepoHost {
         // Anything queued before the process died is sent once a network is available.
         OutboxWorker.schedule(this)
         com.pravahax.portalx.push.Push.createChannels(this)
+        // v0.10.1 PortalX NOW: local nudges (forgotten check-out, meeting soon) + widget refresh, about every 15 minutes.
+        com.pravahax.portalx.now.NowNudgeWorker.schedule(this)
     }
 }

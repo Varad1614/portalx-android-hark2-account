@@ -11,4 +11,7 @@
     <TextView android:id="@+id/widget_detail" android:layout_width="match_parent" android:layout_height="wrap_content"
         android:layout_marginTop="2dp" android:textColor="#6F5E4A" android:textSize="13sp"
         android:maxLines="1" android:ellipsize="end" android:text="Your day at a glance" />
+    <TextView android:id="@+id/widget_now" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="6dp" android:textColor="@color/brand_gold" android:textSize="13sp" android:textStyle="bold"
+        android:maxLines="1" android:ellipsize="end" android:visibility="gone" />
 </LinearLayout>

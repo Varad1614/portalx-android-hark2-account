@@ -49,6 +49,9 @@ class TodayWidget : AppWidgetProvider() {
             val views = RemoteViews(ctx.packageName, R.layout.widget_today).apply {
                 setTextViewText(R.id.widget_headline, s.headline)
                 setTextViewText(R.id.widget_detail, s.detail)
+                // v0.10.1: the NOW line, when there is something to do.
+                setTextViewText(R.id.widget_now, s.now ?: "")
+                setViewVisibility(R.id.widget_now, if (s.now != null) android.view.View.VISIBLE else android.view.View.GONE)
                 setOnClickPendingIntent(R.id.widget_root, pi)
             }
             manager.updateAppWidget(ids, views)
@@ -63,17 +66,29 @@ class TodayWidget : AppWidgetProvider() {
                 if (user.canApproveLeave) LeaveRequest.list(repo.cachedResponse(Endpoint.PendingLeaveApprovals.fn.name)) else emptyList(),
                 if (user.canApproveCorrections) Correction.list(repo.cachedResponse(Endpoint.Corrections.fn.name)) else emptyList(),
             ).size
-            return WidgetSummary.of(today, tasks.count { !it.done }, approvals)
+            // NOW from the same cache. Cache-only, so marked Updating: the tap opens the app, which loads live before any punch.
+            val now = runCatching {
+                com.pravahax.portalx.now.NowEngine.evaluate(com.pravahax.portalx.now.NowContext.build(
+                    java.time.ZonedDateTime.now(com.pravahax.portalx.data.AppZone), today,
+                    if (today == null) com.pravahax.portalx.now.Freshness.Unknown else com.pravahax.portalx.now.Freshness.Updating,
+                    com.pravahax.portalx.data.model.Meeting.list(repo.cachedResponse(Endpoint.Meetings.fn.name)), tasks,
+                    repo.cachedResponse(Endpoint.MyLeave.fn.name)?.let { com.pravahax.portalx.data.model.LeaveSummary.from(it) },
+                    repo.cachedResponse("cal-${java.time.YearMonth.from(Dates.today())}")?.let { com.pravahax.portalx.data.model.CalendarMonth.from(it) },
+                    approvals, user.canApproveLeave || user.canApproveCorrections,
+                )).chosen
+            }.getOrNull()
+            return WidgetSummary.of(today, tasks.count { !it.done }, approvals, now = now)
         }
     }
 }
 
 /** What the widget says. Pure, so it is unit-tested without a launcher. */
-data class WidgetSummary(val headline: String, val detail: String, val route: String) {
+data class WidgetSummary(val headline: String, val detail: String, val route: String, val now: String? = null) {
     companion object {
         val signedOut = WidgetSummary("Sign in to PortalX", "Your day at a glance", "home")
 
-        fun of(today: AttendanceToday?, openTasks: Int, approvals: Int, day: java.time.LocalDate = Dates.today()): WidgetSummary {
+        fun of(today: AttendanceToday?, openTasks: Int, approvals: Int, day: java.time.LocalDate = Dates.today(),
+               now: com.pravahax.portalx.now.Candidate? = null): WidgetSummary {
             // v0.9.1: the cache has no date of its own; a punch from an earlier day means the cache is stale (after midnight).
             val stale = listOfNotNull(today?.checkIn, today?.checkOut).any { Dates.instant(it)?.toLocalDate()?.let { d -> d != day } == true }
             val headline = when {
@@ -88,7 +103,12 @@ data class WidgetSummary(val headline: String, val detail: String, val route: St
                 add(if (openTasks == 0) "No open tasks" else "$openTasks open task${if (openTasks == 1) "" else "s"}")
                 if (approvals > 0) add("$approvals to approve")
             }
-            return WidgetSummary(headline, parts.joinToString(" · "), if (approvals > 0) "approvals" else "attendance")
+            val fallback = if (approvals > 0) "approvals" else "attendance"
+            // Only an actionable NOW candidate earns the line (and the tap target); "nothing urgent" stays quiet.
+            val act = (now?.action as? com.pravahax.portalx.now.NowAction.Open)?.route?.let(Push::safeRoute)
+            val line = now?.takeIf { !stale && today != null && it.action != com.pravahax.portalx.now.NowAction.None }
+                ?.let { "Now: " + it.title + if (it.detail.isNotBlank()) " · ${it.detail}" else "" }
+            return WidgetSummary(headline, parts.joinToString(" · "), if (line != null && act != null) act else fallback, line)
         }
     }
 }
