@@ -52,7 +52,8 @@ fun HomeScreen(user: SessionUser, navigate: (String) -> Unit) {
     val projects = rememberResource(Endpoint.Projects, enabled = user.can("projects.read"))
     val ym = java.time.YearMonth.from(Dates.today())
     val cal = rememberResource(Endpoint.CalendarMonth, buildJsonObject { put("year", ym.year); put("month", ym.monthValue) }, key = "cal-$ym", enabled = user.can("comms.read"))
-    val all = listOf(today, tasks, leave, ann, people, pendLeave, pendCorr, projects, cal)
+    val meetings = rememberResource(Endpoint.Meetings)
+    val all = listOf(today, tasks, leave, ann, people, pendLeave, pendCorr, projects, cal, meetings)
     val refreshing = all.any { it.refreshing }
     var detail by remember { mutableStateOf<Stat?>(null) }
 
@@ -71,6 +72,25 @@ fun HomeScreen(user: SessionUser, navigate: (String) -> Unit) {
         }
         val firstErr = listOf(today, tasks, leave).firstOrNull { it.error != null }
         firstErr?.let { r -> item(key = "err") { ErrorBanner(r.error ?: "", stale = r.stale) { today.refresh(); tasks.refresh(); leave.refresh() } } }
+
+        // v0.10 PortalX NOW: the single most relevant next action, from deterministic rules over the data above.
+        item(key = "now") {
+            val now = rememberNowZoned()
+            var snoozeTick by remember { mutableIntStateOf(0) }
+            val approvals = com.pravahax.portalx.data.model.ApprovalItem.inbox(pendLeave.data.orEmpty(), pendCorr.data.orEmpty()).size
+            val result = remember(now, today.data, today.loading, today.stale, today.error, tasks.data, meetings.data, leave.data, cal.data, approvals, snoozeTick) {
+                val ctx = com.pravahax.portalx.now.NowContext.build(
+                    now, today.data,
+                    com.pravahax.portalx.now.NowContext.freshness(today.data != null, today.loading, today.stale, today.error),
+                    meetings.data.orEmpty(), tasks.data.orEmpty(), leave.data, cal.data, approvals,
+                    user.canApproveLeave || user.canApproveCorrections,
+                )
+                com.pravahax.portalx.now.NowEngine.evaluate(ctx, snoozedUntil = com.pravahax.portalx.now.NowSnoozes.snapshot())
+            }
+            NowCard(result, today.initialLoading, navigate, refresh = { today.refresh() }, onSnooze = { shown ->
+                com.pravahax.portalx.now.NowSnoozes.snooze(shown); snoozeTick++
+            })
+        }
 
         item(key = "hero") { AttendanceHero(today, navigate) }
 
