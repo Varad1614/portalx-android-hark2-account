@@ -68,7 +68,7 @@ internal fun newSelfieFile(ctx: Context): File {
 internal suspend fun prepareSelfie(ctx: Context, capture: File): File = withContext(Dispatchers.Default) {
     val out = File(selfieDir(ctx), "upload-${System.currentTimeMillis()}.jpg")
     try {
-        Selfie.process(capture, out)
+        Selfie.process(capture, out, maxEdge = 960) // v0.9.3: sent as a base64 JSON data URL like the web (≤ 960 px)
     } catch (e: Throwable) {
         out.delete(); throw e
     } finally {

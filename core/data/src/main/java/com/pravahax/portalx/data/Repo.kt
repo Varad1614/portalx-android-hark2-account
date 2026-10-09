@@ -330,8 +330,11 @@ class Repo(
     }
 
     /**
-     * Check-in / check-out as multipart/form-data: `selfie` (JPEG file; required for check-in, optional for check-out),
-     * optional `latitude`/`longitude`/`accuracyMeters`, `deviceId`, and (v0.9.1) the liveness result as the `X-PortalX-Liveness` header. Never auto-retried (writeClient).
+     * Check-in / check-out as JSON, the way the web app sends it: `{"selfie": "data:image/jpeg;base64,…"}` plus the
+     * optional `latitude`/`longitude`/`accuracyMeters` and `deviceId`. v0.9.3: the live gateway only parses JSON bodies;
+     * the v0.6 multipart form was answered with "Invalid JSON request payload". If the gateway rejects the extra
+     * fields (400/422: nothing was recorded), the punch is retried once with the selfie alone, exactly as the web posts it.
+     * Liveness rides the `X-PortalX-Liveness` header. Never auto-retried otherwise (writeClient).
      * [selfie] is deleted once the upload has finished, whatever the outcome.
      * @return the server's `meta.locationRecorded` (false when absent).
      */
@@ -339,12 +342,19 @@ class Repo(
         require(fn == Fn.CheckIn || fn == Fn.CheckOut) { "punch is only for check-in/out" }
         try {
             if (fn == Fn.CheckIn && selfie == null) throw PortalException("A selfie is required to check in.")
-            val data = buildJsonObject {
-                fix?.formFields()?.forEach { (k, v) -> put(k, v) }
+            val dataUrl = selfie?.let { "data:image/jpeg;base64," + java.util.Base64.getEncoder().encodeToString(it.readBytes()) }
+            val full = buildJsonObject {
+                dataUrl?.let { put("selfie", it) }
+                fix?.formFields()?.forEach { (k, v) -> v.toDoubleOrNull()?.let { d -> put(k, d) } }
                 put("deviceId", api.deviceId)
             }
-            val env = api.callEnvelope(fn, data, listOfNotNull(selfie?.let { FilePart("selfie", it, "image/jpeg", "selfie.jpg") }),
-                headers = if (selfie != null && liveness != null) mapOf(liveness.header()) else emptyMap())
+            val headers = if (selfie != null && liveness != null) mapOf(liveness.header()) else emptyMap()
+            val env = try {
+                api.callEnvelope(fn, full, headers = headers)
+            } catch (e: PortalException) {
+                if (e.code != 400 && e.code != 422) throw e
+                api.callEnvelope(fn, buildJsonObject { dataUrl?.let { put("selfie", it) } }, headers = headers)
+            }
             invalidate(Invalidation.after(fn))
             return env.metaBool("locationRecorded") ?: false
         } finally {

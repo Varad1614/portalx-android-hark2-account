@@ -95,9 +95,9 @@ enum class Fn(val m: M, val path: String, val multipart: Boolean = false) {
     // attendance
     AttendanceToday(M.GET, "attendance/today"),
     AttendanceHistory(M.GET, "attendance/history"),
-    /** v0.6: multipart/form-data — `selfie` (image/jpeg file), `latitude`, `longitude`, `accuracyMeters`, `deviceId`. */
-    CheckIn(M.POST, "attendance/check-in", multipart = true),
-    CheckOut(M.POST, "attendance/check-out", multipart = true),
+    /** v0.9.3: JSON — `selfie` (JPEG data URL, like the web), optional `latitude`, `longitude`, `accuracyMeters`, `deviceId`. */
+    CheckIn(M.POST, "attendance/check-in"),
+    CheckOut(M.POST, "attendance/check-out"),
     StartBreak(M.POST, "attendance/break/start"),
     EndBreak(M.POST, "attendance/break/end"),
     RequestCorrection(M.POST, "attendance/corrections/request"),

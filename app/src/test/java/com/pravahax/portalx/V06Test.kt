@@ -43,22 +43,21 @@ import java.util.concurrent.TimeUnit
 
 internal data class Part(val name: String, val filename: String?, val contentType: String?, val body: ByteArray)
 
-/** Parses a recorded multipart/form-data request into its parts. */
+/**
+ * v0.9.3: check-in/out is JSON like the web (`selfie` = JPEG data URL). Parses the recorded body into the same
+ * [Part] view the v0.6 multipart tests used: the selfie as decoded JPEG bytes, every other field as its text.
+ */
 internal fun parts(req: RecordedRequest): List<Part> {
     val ct = req.getHeader("Content-Type")!!
-    assertTrue("not multipart: $ct", ct.startsWith("multipart/form-data"))
-    val boundary = ct.substringAfter("boundary=").trim('"')
-    val out = mutableListOf<Part>()
-    MultipartReader(Buffer().write(req.body.readByteArray()), boundary).use { r ->
-        while (true) {
-            val p = r.nextPart() ?: break
-            val cd = p.headers["Content-Disposition"]!!
-            val name = Regex("name=\"([^\"]+)\"").find(cd)!!.groupValues[1]
-            val fn = Regex("filename=\"([^\"]+)\"").find(cd)?.groupValues?.get(1)
-            out += Part(name, fn, p.headers["Content-Type"], p.body.readByteArray())
-        }
+    assertTrue("not JSON: $ct", ct.startsWith("application/json"))
+    val o = kotlinx.serialization.json.Json.parseToJsonElement(req.body.readUtf8()) as kotlinx.serialization.json.JsonObject
+    return o.map { (k, v) ->
+        val text = (v as kotlinx.serialization.json.JsonPrimitive).content
+        if (k == "selfie") {
+            assertTrue("selfie must be a JPEG data URL", text.startsWith("data:image/jpeg;base64,"))
+            Part(k, "selfie.jpg", "image/jpeg", java.util.Base64.getDecoder().decode(text.substringAfter(",")))
+        } else Part(k, null, null, text.toByteArray())
     }
-    return out
 }
 
 /** Copies a real JPEG from test resources (capture-small.jpg 40×30, capture-4000x3000.jpg) to a temp file. */
@@ -148,6 +147,16 @@ class MultipartAttendanceTest {
             assertEquals("redirect followed", 0, elsewhere.requestCount)
             assertFalse(selfie.exists())
         } finally { elsewhere.shutdown() }
+    }
+
+    /** The live gateway answers a body it can't take with 400: retry once with the selfie alone, like the web. */
+    @Test fun rejectedExtraFieldsFallBackToSelfieOnly() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(400).setHeader("Content-Type", "application/json")
+            .setBody("""{"success":false,"error":{"code":"BAD_REQUEST","message":"Invalid JSON request payload."}}"""))
+        server.enqueue(envelope("""{"id":41}"""))
+        repo.punch(Fn.CheckIn, jpegFile(ctx.cacheDir), Fix(19.997454, 73.789803, 12.5f))
+        assertEquals(setOf("selfie", "latitude", "longitude", "accuracyMeters", "deviceId"), parts(server.takeRequest()).map { it.name }.toSet())
+        assertEquals(listOf("selfie"), parts(server.takeRequest()).map { it.name })
     }
 
     @Test fun multipartWritesAreNeverRetried() = runBlocking {

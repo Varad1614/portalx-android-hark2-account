@@ -17,8 +17,8 @@ Raw service rows (snake_case) are mapped to screen shapes in `data/Shapes.kt`. P
 | AuthRefresh | POST | `auth/refresh` | signed in (returns login shape; old token revoked) |
 | AttendanceToday | GET | `attendance/today` | attendance.read |
 | AttendanceHistory | GET | `attendance/history` | attendance.read |
-| CheckIn | POST (multipart) | `attendance/check-in` | attendance.read |
-| CheckOut | POST (multipart) | `attendance/check-out` | attendance.read |
+| CheckIn | POST (JSON) | `attendance/check-in` | attendance.read |
+| CheckOut | POST (JSON) | `attendance/check-out` | attendance.read |
 | StartBreak | POST | `attendance/break/start` | attendance.read |
 | EndBreak | POST | `attendance/break/end` | attendance.read |
 | RequestCorrection | POST | `attendance/corrections/request` | attendance.read |
@@ -58,7 +58,7 @@ Raw service rows (snake_case) are mapped to screen shapes in `data/Shapes.kt`. P
 | Settings | GET | `settings` | organization.settings.manage |
 
 ## v0.6 contract details
-- **Check-in / check-out** (`multipart/form-data`): `selfie` file part (`image/jpeg`, filename `selfie.jpg`; required for check-in, optional for check-out), optional text parts `latitude`, `longitude` (6 decimals), `accuracyMeters` (1 decimal), and `deviceId`. Response is the usual envelope plus `meta.locationRecorded` (boolean); the app shows "Location recorded" / "Checked in without location" from it (absent = false). Sent on the no-auto-retry write client; never replayed on redirect.
+- **Check-in / check-out** (JSON, since v0.9.3; the live gateway rejected v0.6 multipart with "Invalid JSON request payload"): `selfie` as a JPEG data URL (`data:image/jpeg;base64,...`, like the web; required for check-in, optional for check-out), optional numbers `latitude`, `longitude`, `accuracyMeters`, and `deviceId`. On 400/422 the app retries once with `selfie` alone. Response is the usual envelope plus `meta.locationRecorded` (boolean); the app shows "Location recorded" / "Checked in without location" from it (absent = false). Sent on the no-auto-retry write client; never replayed on redirect.
   - Selfie: ≤ 1280 px long edge, EXIF orientation applied to the pixels, JPEG q80, all EXIF/XMP/COM segments stripped. Temp files are deleted after the upload finishes.
   - Location: best-effort only, never blocks check-in. Platform `LocationManager` (no Play Services): `getCurrentLocation` on API 30+, recent (≤ 10 min) last-known fix on 26–29 or as fallback; 5 s budget. No geofencing.
 - **auth/refresh** (POST, bearer): `{token, compositeToken, expiresInSeconds, workspace, user}`. Login stores `now + expiresInSeconds` in SecureStore. On app start and every resume, if < 48 h is left (or the expiry is unknown, i.e. a pre-v0.6 session), the app refreshes once (single-flight Mutex; skipped while a write is in flight; requests that start during the swap wait and go out with the new token). 401 → clean sign-out; any other failure keeps the current session.
