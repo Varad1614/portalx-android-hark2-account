@@ -73,9 +73,11 @@ data class WidgetSummary(val headline: String, val detail: String, val route: St
     companion object {
         val signedOut = WidgetSummary("Sign in to PortalX", "Your day at a glance", "home")
 
-        fun of(today: AttendanceToday?, openTasks: Int, approvals: Int): WidgetSummary {
+        fun of(today: AttendanceToday?, openTasks: Int, approvals: Int, day: java.time.LocalDate = Dates.today()): WidgetSummary {
+            // v0.9.1: the cache has no date of its own; a punch from an earlier day means the cache is stale (after midnight).
+            val stale = listOfNotNull(today?.checkIn, today?.checkOut).any { Dates.instant(it)?.toLocalDate()?.let { d -> d != day } == true }
             val headline = when {
-                today == null -> "Open PortalX to sync"
+                today == null || stale -> "Open PortalX to sync"
                 today.onLeave -> "On leave today"
                 today.checkOut != null -> "Checked out at ${Dates.time(today.checkOut)}"
                 today.onBreak -> "On a break"

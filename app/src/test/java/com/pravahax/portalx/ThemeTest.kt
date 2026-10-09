@@ -26,7 +26,7 @@ class ThemeTest {
                 assertTrue("nav bar icons must be dark (light-appearance)", c.isAppearanceLightNavigationBars)
                 val bg = (a.window.decorView.background as? ColorDrawable)?.color
                 assertEquals(0xFFFBFAF7.toInt(), bg) // parchment, never slate-950
-                assertTrue(a.window.decorView.filterTouchesWhenObscured)
+                assertTrue(!a.window.decorView.filterTouchesWhenObscured) // v0.9.1: overlays no longer kill every tap
                 println("THEME_OK light in night mode")
             }
         }

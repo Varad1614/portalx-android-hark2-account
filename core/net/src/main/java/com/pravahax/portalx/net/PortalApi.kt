@@ -188,7 +188,8 @@ class PortalApi(
                 PortalException("You're offline or Portal One can't be reached. Check your connection.", offline = true)
             is SocketTimeoutException, is InterruptedIOException ->
                 PortalException("Portal One is taking too long to respond. Please try again.", offline = true)
-            is SSLException -> PortalException("A secure connection to Portal One couldn't be established.", offline = true)
+            // Not "offline": a TLS/pin failure won't fix itself by reconnecting, so writes must not queue forever.
+            is SSLException -> PortalException("A secure connection to Portal One couldn't be verified. Update PortalX or try another network.")
             else -> PortalException("Something went wrong talking to Portal One. Please try again.")
         }
 
@@ -255,7 +256,7 @@ class PortalApi(
     suspend fun call(fn: Fn, data: JsonElement? = null, idempotencyKey: String? = null): JsonElement =
         callEnvelope(fn, data, idempotencyKey = idempotencyKey).data
 
-    suspend fun callEnvelope(fn: Fn, data: JsonElement? = null, files: List<FilePart> = emptyList(), idempotencyKey: String? = null): Envelope = withContext(Dispatchers.IO) {
+    suspend fun callEnvelope(fn: Fn, data: JsonElement? = null, files: List<FilePart> = emptyList(), idempotencyKey: String? = null, headers: Map<String, String> = emptyMap()): Envelope = withContext(Dispatchers.IO) {
         // Wait out an in-progress token rotation, then register as in flight (Dekker-style with the refresh's check).
         while (true) {
             gate?.await()
@@ -266,10 +267,10 @@ class PortalApi(
         if (!fn.get) writesInFlight.incrementAndGet()
         try {
             try {
-                guarded(fn, data, files, idempotencyKey)
+                guarded(fn, data, files, idempotencyKey, headers)
             } catch (e: PortalException) {
                 // Reads are safe to retry once on a transient failure; writes never are.
-                if (fn.get && e.retryable) { delay(600); guarded(fn, data, files, idempotencyKey) } else throw e
+                if (fn.get && e.retryable) { delay(600); guarded(fn, data, files, idempotencyKey, headers) } else throw e
             }
         } finally {
             if (!fn.get) writesInFlight.decrementAndGet()
@@ -324,10 +325,10 @@ class PortalApi(
         }
     }
 
-    private fun guarded(fn: Fn, data: JsonElement?, files: List<FilePart>, idempotencyKey: String? = null): Envelope {
+    private fun guarded(fn: Fn, data: JsonElement?, files: List<FilePart>, idempotencyKey: String? = null, headers: Map<String, String> = emptyMap()): Envelope {
         val sent = token
         return try {
-            execute(fn, data, files, idempotencyKey)
+            execute(fn, data, files, idempotencyKey, headers)
         } catch (e: CancellationException) {
             throw e
         } catch (e: PortalException) {
@@ -348,7 +349,7 @@ class PortalApi(
      * [Fn.multipart] routes, as multipart/form-data text parts plus [files].
      */
     @VisibleForTesting
-    fun buildRequest(fn: Fn, data: JsonElement?, files: List<FilePart> = emptyList(), idempotencyKey: String? = null): Request {
+    fun buildRequest(fn: Fn, data: JsonElement?, files: List<FilePart> = emptyList(), idempotencyKey: String? = null, headers: Map<String, String> = emptyMap()): Request {
         val fields = (data as? JsonObject)?.toMutableMap() ?: mutableMapOf()
         var path = fn.path
         Regex("\\{(\\w+)\\}").findAll(fn.path).forEach { m ->
@@ -363,6 +364,7 @@ class PortalApi(
             .header("User-Agent", userAgent)
             .header(DEVICE_ID_HEADER, deviceId)
         token?.let { b.header("Authorization", "Bearer $it") }
+        headers.forEach { (k, v) -> b.header(k, v) }
         return if (fn.get) {
             fields.forEach { (k, v) -> if (v !is JsonNull) url.addQueryParameter(k, (v as? JsonPrimitive)?.contentOrNull ?: v.toString()) }
             b.url(url.build()).get().build()
@@ -382,8 +384,8 @@ class PortalApi(
         }
     }
 
-    private fun execute(fn: Fn, data: JsonElement?, files: List<FilePart>, idempotencyKey: String? = null): Envelope {
-        val req = buildRequest(fn, data, files, idempotencyKey)
+    private fun execute(fn: Fn, data: JsonElement?, files: List<FilePart>, idempotencyKey: String? = null, headers: Map<String, String> = emptyMap()): Envelope {
+        val req = buildRequest(fn, data, files, idempotencyKey, headers)
         (if (fn.get) client else writeClient).newCall(req).execute().use { resp ->
             if (resp.code in 300..399) throw PortalException("Portal One answered with an unexpected redirect (${resp.code}).", resp.code)
             val body = readCapped(resp.body)

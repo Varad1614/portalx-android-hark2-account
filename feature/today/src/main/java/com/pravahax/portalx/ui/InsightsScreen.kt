@@ -30,9 +30,9 @@ fun InsightsScreen() {
     RefreshList(history.refreshing || leave.refreshing, { history.refresh(); leave.refresh() }) {
         history.error?.let { e -> item(key = "err") { ErrorBanner(e, history.stale) { history.refresh() } } }
         item(key = "h30") { SectionHeader("Last 30 days") }
-        if (history.initialLoading) { item(key = "sk") { SkeletonList(2, 96.dp) }; return@RefreshList }
-        if (ins.daysPresent == 0) { item(key = "empty") { EmptyState("No attendance yet", "Insights appear once you've checked in for a few days.", Icons.Outlined.Insights) }; return@RefreshList }
-        item(key = "tiles") {
+        if (history.initialLoading) item(key = "sk") { SkeletonList(2, 96.dp) }
+        else if (ins.daysPresent == 0) item(key = "empty") { EmptyState("No attendance yet", "Insights appear once you've checked in for a few days.", Icons.Outlined.Insights) }
+        else item(key = "tiles") {
             Column(verticalArrangement = Arrangement.spacedBy(Space.md)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(Space.md)) {
                     Tile(Icons.Outlined.EventAvailable, "Days present", "${ins.daysPresent}", Modifier.weight(1f))
@@ -45,8 +45,10 @@ fun InsightsScreen() {
                 ins.onTimeRate?.let { Tile(Icons.Outlined.TaskAlt, "On time", "$it%" + if (ins.lateDays > 0) " · ${ins.lateDays} late" else "", Modifier.fillMaxWidth()) }
             }
         }
-        item(key = "chart-h") { SectionHeader("Hours, last 14 days") }
-        item(key = "chart") { SectionCard { HoursChart(ins.daily) } }
+        if (ins.daysPresent > 0) {
+            item(key = "chart-h") { SectionHeader("Hours, last 14 days") }
+            item(key = "chart") { SectionCard { HoursChart(ins.daily) } }
+        }
         li?.let { l ->
             item(key = "leave-h") { SectionHeader("Leave this year") }
             item(key = "leave") {

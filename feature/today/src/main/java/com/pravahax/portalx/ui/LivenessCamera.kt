@@ -52,7 +52,12 @@ object LivenessSupport {
     }.getOrDefault(false)
 }
 
-/** v0.9: full-screen front-camera liveness check; on success captures the selfie to [output]. */
+/**
+ * v0.9: full-screen front-camera liveness check; on success captures the selfie to [output].
+ * v0.9.1 hardening: a wall-clock timer drives the timeout (it used to advance only on detected faces), a watchdog
+ * falls back to the system camera when no frame is analysed in [NO_FRAMES_MS] or the camera reports an error,
+ * a failed attempt offers the regular camera, and every camera callback is ignored once the dialog is gone.
+ */
 @OptIn(ExperimentalGetImage::class)
 @Composable
 fun LivenessDialog(output: File, onResult: (LivenessOutcome) -> Unit) {
@@ -61,12 +66,19 @@ fun LivenessDialog(output: File, onResult: (LivenessOutcome) -> Unit) {
     var attempt by remember { mutableIntStateOf(0) }
     val check = remember(attempt) { LivenessCheck(startedAt = System.currentTimeMillis()) }
     var state by remember { mutableStateOf<LivenessCheck.State>(check.state) }
-    LaunchedEffect(attempt) { state = check.state }
     var capturing by remember { mutableStateOf(false) }
-    val done = remember { booleanArrayOf(false) }
-    fun finish(o: LivenessOutcome) { if (!done[0]) { done[0] = true; onResult(o) } }
+    var lastFrameAt by remember { mutableLongStateOf(0L) }
+    val openedAt = remember { System.currentTimeMillis() }
+    val done = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+    val latest by rememberUpdatedState(onResult)
+    fun finish(o: LivenessOutcome) { if (done.compareAndSet(false, true)) latest(o) }
 
-    val previewView = remember { PreviewView(ctx).apply { scaleType = PreviewView.ScaleType.FILL_CENTER } }
+    val previewView = remember {
+        PreviewView(ctx).apply {
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE // TextureView: clips to the circle
+        }
+    }
     val capture = remember { ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build() }
     val executor = remember { Executors.newSingleThreadExecutor() }
     val detector = remember {
@@ -77,9 +89,12 @@ fun LivenessDialog(output: File, onResult: (LivenessOutcome) -> Unit) {
     val currentCheck by rememberUpdatedState(check)
 
     DisposableEffect(Unit) {
+        var disposed = false
+        var failures = 0
         val future = ProcessCameraProvider.getInstance(ctx)
         var provider: ProcessCameraProvider? = null
         future.addListener({
+            if (disposed) return@addListener // dialog closed before the camera was ready: never bind
             try {
                 val p = future.get().also { provider = it }
                 if (!p.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) { finish(LivenessOutcome.Unavailable); return@addListener }
@@ -87,43 +102,66 @@ fun LivenessDialog(output: File, onResult: (LivenessOutcome) -> Unit) {
                 val analysis = ImageAnalysis.Builder().setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
                 analysis.setAnalyzer(executor) { proxy ->
                     val media = proxy.image
-                    if (media == null || done[0]) { proxy.close(); return@setAnalyzer }
+                    if (media == null || done.get()) { proxy.close(); return@setAnalyzer }
                     val rot = proxy.imageInfo.rotationDegrees
                     val width = if (rot == 90 || rot == 270) proxy.height else proxy.width
                     detector.process(InputImage.fromMediaImage(media, rot))
                         .addOnSuccessListener(main) { faces ->
+                            if (disposed) return@addOnSuccessListener
+                            failures = 0
+                            lastFrameAt = System.currentTimeMillis()
                             val f = faces.firstOrNull()
                             val frame = FaceFrame(faces.size, (f?.boundingBox?.width() ?: 0) / width.toFloat(), f?.headEulerAngleY ?: 0f,
                                 f?.leftEyeOpenProbability, f?.rightEyeOpenProbability, f?.smilingProbability)
                             state = currentCheck.onFrame(frame, System.currentTimeMillis())
                         }
-                        .addOnFailureListener(main) { e -> if (e is MlKitException && e.errorCode == MlKitException.UNAVAILABLE) finish(LivenessOutcome.Unavailable) }
+                        .addOnFailureListener(main) { e ->
+                            if (disposed) return@addOnFailureListener
+                            // Model not downloaded yet, or the detector keeps failing: use the regular camera.
+                            if ((e is MlKitException && e.errorCode == MlKitException.UNAVAILABLE) || ++failures >= 10) finish(LivenessOutcome.Unavailable)
+                        }
                         .addOnCompleteListener { proxy.close() }
                 }
                 p.unbindAll()
-                p.bindToLifecycle(owner, CameraSelector.DEFAULT_FRONT_CAMERA, preview, analysis, capture)
+                val camera = p.bindToLifecycle(owner, CameraSelector.DEFAULT_FRONT_CAMERA, preview, analysis, capture)
+                // Camera taken by another app, disabled by policy, or failed: don't leave the user on a frozen circle.
+                camera.cameraInfo.cameraState.observe(owner) { cs -> if (!disposed && cs.error?.type == CameraState.ErrorType.CRITICAL) finish(LivenessOutcome.Unavailable) }
             } catch (e: Exception) {
                 finish(LivenessOutcome.Unavailable)
             }
         }, main)
         onDispose {
+            disposed = true
+            done.set(true)
             runCatching { provider?.unbindAll() }
             runCatching { detector.close() }
             executor.shutdown()
         }
     }
 
+    // Wall clock: the challenge timeout, plus the no-frames watchdog.
+    LaunchedEffect(attempt) {
+        while (true) {
+            kotlinx.coroutines.delay(500)
+            val now = System.currentTimeMillis()
+            if (lastFrameAt == 0L && now - openedAt > NO_FRAMES_MS) { finish(LivenessOutcome.Unavailable); break }
+            if (!capturing) state = check.tick(now)
+            if (state is LivenessCheck.State.Failed || state == LivenessCheck.State.Passed) break
+        }
+    }
+    LaunchedEffect(attempt) { state = check.state }
+
     LaunchedEffect(state) {
-        if (state == LivenessCheck.State.Passed && !capturing) {
+        if (state == LivenessCheck.State.Passed && !capturing && !done.get()) {
             capturing = true
-            capture.takePicture(ImageCapture.OutputFileOptions.Builder(output).build(), executor, object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(r: ImageCapture.OutputFileResults) { main.execute { finish(LivenessOutcome.Passed(output, check.challenges.map { it.name.lowercase() })) } }
-                override fun onError(e: ImageCaptureException) { main.execute { capturing = false; finish(LivenessOutcome.Unavailable) } }
+            capture.takePicture(ImageCapture.OutputFileOptions.Builder(output).build(), main, object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(r: ImageCapture.OutputFileResults) { finish(LivenessOutcome.Passed(output, check.challenges.map { it.name.lowercase() })) }
+                override fun onError(e: ImageCaptureException) { capturing = false; finish(LivenessOutcome.Unavailable) }
             })
         }
     }
 
-    Dialog(onDismissRequest = { finish(LivenessOutcome.Cancelled) }, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)) {
+    Dialog(onDismissRequest = { if (!capturing) finish(LivenessOutcome.Cancelled) }, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)) {
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).systemBarsPadding().padding(Space.xxl),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Kicker("Quick liveness check")
@@ -133,7 +171,7 @@ fun LivenessDialog(output: File, onResult: (LivenessOutcome) -> Unit) {
             AndroidView({ previewView }, Modifier.size(260.dp).clip(CircleShape).border(4.dp, ring, CircleShape))
             Spacer(Modifier.height(Space.xl))
             val text = when (s) {
-                is LivenessCheck.State.Hint -> s.text
+                is LivenessCheck.State.Hint -> if (lastFrameAt == 0L) "Starting the camera…" else s.text
                 is LivenessCheck.State.Doing -> s.challenge.prompt
                 LivenessCheck.State.Passed -> "Done — taking your selfie"
                 is LivenessCheck.State.Failed -> s.reason
@@ -147,8 +185,14 @@ fun LivenessDialog(output: File, onResult: (LivenessOutcome) -> Unit) {
                 }
             }
             Spacer(Modifier.height(Space.xxl))
-            if (s is LivenessCheck.State.Failed) Button(onClick = { attempt++ }, Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = MaterialTheme.shapes.medium) { Text("Try again") }
+            if (s is LivenessCheck.State.Failed) {
+                Button(onClick = { lastFrameAt = System.currentTimeMillis(); attempt++ }, Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = MaterialTheme.shapes.medium) { Text("Try again") }
+                // Never a dead end: glasses, low light or no eye/smile scores on some phones can make the check impossible.
+                OutlinedButton(onClick = { finish(LivenessOutcome.Unavailable) }, Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = MaterialTheme.shapes.medium) { Text("Use regular camera instead") }
+            }
             TextButton(onClick = { finish(LivenessOutcome.Cancelled) }, enabled = !capturing) { Text("Cancel") }
         }
     }
 }
+
+private const val NO_FRAMES_MS = 8_000L

@@ -44,10 +44,13 @@ fun TaskCommentRequest.toJson(): JsonElement = requestJson.encodeToJsonElement(t
 fun CreateTaskRequest.toJson(): JsonElement = requestJson.encodeToJsonElement(this)
 fun DecisionRequest.toJson(): JsonElement = requestJson.encodeToJsonElement(this)
 
-/** v0.9: the on-device liveness result sent with a check-in/out selfie. [passed] false means the check couldn't run. */
+/**
+ * v0.9: the on-device liveness result sent with a check-in/out selfie. [passed] false means the check couldn't run.
+ * v0.9.1: sent as the `X-PortalX-Liveness` header (`passed; challenges=blink,turn` | `unavailable`), never as form
+ * fields, so a gateway that validates the multipart body strictly can't reject the punch because of it.
+ */
 data class LivenessResult(val passed: Boolean, val challenges: List<String> = emptyList()) {
-    fun formFields(): Map<String, String> = buildMap {
-        put("liveness", if (passed) "passed" else "unavailable")
-        if (challenges.isNotEmpty()) put("livenessChallenges", challenges.joinToString(","))
-    }
+    fun header(): Pair<String, String> = HEADER to (if (passed) "passed" else "unavailable") +
+        (if (challenges.isNotEmpty()) "; challenges=" + challenges.joinToString(",") else "")
+    companion object { const val HEADER = "X-PortalX-Liveness" }
 }

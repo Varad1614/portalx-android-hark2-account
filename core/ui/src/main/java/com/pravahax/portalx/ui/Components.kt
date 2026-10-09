@@ -93,6 +93,9 @@ val LocalRepo = staticCompositionLocalOf<Repo> { error("no repo") }
 val LocalSessionExpired = staticCompositionLocalOf<() -> Unit> { {} }
 val LocalSnackbar = staticCompositionLocalOf { SnackbarHostState() }
 
+/** v0.9.1: a scope that lives as long as the activity's content, for work that must survive leaving a screen (punches). */
+val LocalAppScope = staticCompositionLocalOf<kotlinx.coroutines.CoroutineScope?> { null }
+
 /**
  * Loads [fn] through a [ResourceViewModel] (v0.7): cached data from Room shows immediately, and the state
  * survives rotation. Refetches when the key first appears, the user pulls to refresh, a write invalidates [fn]
@@ -152,8 +155,9 @@ class ActionRunner internal constructor(
 }
 
 @Composable
-fun rememberAction(): ActionRunner {
-    val scope = rememberCoroutineScope()
+fun rememberAction(longLived: Boolean = false): ActionRunner {
+    val local = rememberCoroutineScope()
+    val scope = (if (longLived) LocalAppScope.current else null) ?: local
     val snack = LocalSnackbar.current
     val expired = LocalSessionExpired.current
     val haptics = rememberHaptics()

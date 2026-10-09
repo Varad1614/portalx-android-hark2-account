@@ -41,10 +41,10 @@ import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 
-private data class Part(val name: String, val filename: String?, val contentType: String?, val body: ByteArray)
+internal data class Part(val name: String, val filename: String?, val contentType: String?, val body: ByteArray)
 
 /** Parses a recorded multipart/form-data request into its parts. */
-private fun parts(req: RecordedRequest): List<Part> {
+internal fun parts(req: RecordedRequest): List<Part> {
     val ct = req.getHeader("Content-Type")!!
     assertTrue("not multipart: $ct", ct.startsWith("multipart/form-data"))
     val boundary = ct.substringAfter("boundary=").trim('"')
@@ -62,7 +62,7 @@ private fun parts(req: RecordedRequest): List<Part> {
 }
 
 /** Copies a real JPEG from test resources (capture-small.jpg 40×30, capture-4000x3000.jpg) to a temp file. */
-private fun jpegFile(dir: File, big: Boolean = false): File {
+internal fun jpegFile(dir: File, big: Boolean = false): File {
     val res = if (big) "capture-4000x3000.jpg" else "capture-small.jpg"
     val bytes = object {}.javaClass.classLoader!!.getResourceAsStream(res)!!.use { it.readBytes() }
     return File(dir, "cap-${System.nanoTime()}.jpg").also { it.writeBytes(bytes) }
@@ -84,7 +84,7 @@ private fun jpegSize(b: ByteArray): Pair<Int, Int> {
     error("no SOF")
 }
 
-private fun envelope(data: String, meta: String = """{"version":"v1"}""") =
+internal fun envelope(data: String, meta: String = """{"version":"v1"}""") =
     MockResponse().setHeader("Content-Type", "application/json").setBody("""{"success":true,"data":$data,"meta":$meta}""")
 
 @RunWith(RobolectricTestRunner::class)

@@ -94,16 +94,28 @@ class MainActivity : ComponentActivity() {
         val reduceMotion = reduceMotion()
         setContent {
             PortalTheme {
-                CompositionLocalProvider(LocalRepo provides repo, LocalReduceMotion provides reduceMotion) {
+                CompositionLocalProvider(LocalRepo provides repo, LocalReduceMotion provides reduceMotion, LocalAppScope provides rememberCoroutineScope()) {
                     val online by connectivity.online.collectAsState()
                     PortalApp(repo, online)
                 }
             }
         }
-        // Tapjacking: drop touches that arrive while another app's window covers ours (overlay attacks on
-        // Check out / Approve / Sign in). Applied to the root so every button in the window is protected.
-        window.decorView.filterTouchesWhenObscured = true
-        findViewById<android.view.View>(android.R.id.content)?.filterTouchesWhenObscured = true
+    }
+
+    /**
+     * v0.9.1: touches under another app's overlay are no longer dropped. Dropping them window-wide made every button
+     * (Check in included) silently dead for anyone running a screen-dimmer / blue-light filter, chat heads or a
+     * screen recorder. Android 12+ already blocks touches through opaque untrusted overlays system-wide; here we let
+     * the touch through and say once per launch that something is drawing over the app.
+     */
+    private var warnedObscured = false
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (!warnedObscured && ev.actionMasked == android.view.MotionEvent.ACTION_DOWN &&
+            (ev.flags and android.view.MotionEvent.FLAG_WINDOW_IS_OBSCURED) != 0) {
+            warnedObscured = true
+            android.widget.Toast.makeText(this, "Another app is drawing over PortalX (like a screen filter). Check what you tap.", android.widget.Toast.LENGTH_LONG).show()
+        }
+        return super.dispatchTouchEvent(ev)
     }
 
     override fun onNewIntent(intent: android.content.Intent) {

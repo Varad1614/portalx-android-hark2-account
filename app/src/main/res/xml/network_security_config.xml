@@ -9,7 +9,8 @@
     <!--
       v0.9 certificate pinning for the gateway. Pins are CA public keys (SPKI SHA-256), not the leaf, so routine
       90-day certificate renewals never break the app. Current chain: pravahax.com <- Let's Encrypt YE2 <- ISRG Root YE
-      <- ISRG Root X2 <- ISRG Root X1. Backups: Google Trust Services GTS Root R1/R4, in case the host moves CA.
+      <- ISRG Root X2 <- ISRG Root X1. Backups cover every CA Cloudflare Universal SSL may switch the host to without notice: Google Trust
+      Services (GTS Root R1/R4) and SSL.com (2016 RSA/ECC and 2022 TLS RSA/ECC roots).
       The expiration is a failsafe: after it, pins are ignored (plain system-CA trust) so an old install can never be
       locked out. Ship a release with refreshed pins and a new date before then.
     -->
@@ -21,6 +22,10 @@
             <pin digest="SHA-256">C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=</pin> <!-- ISRG Root X1 -->
             <pin digest="SHA-256">hxqRlPTu1bMS/0DITB1SSu0vd4u/8l8TjPgfaAp63Gc=</pin> <!-- GTS Root R1 (backup) -->
             <pin digest="SHA-256">mEflZT5enoR1FuXLgYYGqnVEoZvmf9c2bVBpiOjYQ0c=</pin> <!-- GTS Root R4 (backup) -->
+            <pin digest="SHA-256">0cRTd+vc1hjNFlHcLgLCHXUeWqn80bNDH/bs9qMTSPo=</pin> <!-- SSL.com Root CA RSA (backup) -->
+            <pin digest="SHA-256">oyD01TTXvpfBro3QSZc1vIlcMjrdLTiL/M9mLCPX+Zo=</pin> <!-- SSL.com Root CA ECC (backup) -->
+            <pin digest="SHA-256">K89VOmb1cJAN3TK6bf4ezAbJGC1mLcG2Dh97dnwr3VQ=</pin> <!-- SSL.com TLS RSA Root 2022 (backup) -->
+            <pin digest="SHA-256">G/ANXI8TwJTdF+AFBM8IiIUPEv0Gf6H5LA/b9guG4yE=</pin> <!-- SSL.com TLS ECC Root 2022 (backup) -->
         </pin-set>
         <trust-anchors>
             <certificates src="system" />

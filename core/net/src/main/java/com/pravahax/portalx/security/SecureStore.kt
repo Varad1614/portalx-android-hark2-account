@@ -66,7 +66,9 @@ class SecureStore(context: Context, name: String) {
     @Synchronized fun get(k: String): String? {
         if (key == null) return memory[k]
         val raw = prefs.getString(k, null) ?: return null
-        return try { decrypt(raw) } catch (e: Exception) { clear(); null }
+        // One unreadable entry (e.g. a transient Keystore error after boot/OS update) loses only that entry, never the
+        // whole store: wiping it used to sign the user out and mint a new device id.
+        return try { decrypt(raw) } catch (e: Exception) { prefs.edit().remove(k).apply(); null }
     }
 
     @Synchronized fun put(k: String, v: String?) {

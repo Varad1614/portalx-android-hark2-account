@@ -38,9 +38,14 @@ class LivenessCheck(val challenges: List<Challenge> = random(), private val time
     private var phase = 0
     var state: State = State.Hint("Fit your face in the circle"); private set
 
+    /** Wall-clock check, called on a timer too: the timeout must fire even when no face is ever detected. */
+    fun tick(now: Long): State {
+        if (state !is State.Passed && state !is State.Failed && now - startedAt > timeoutMs) state = State.Failed("That took too long. Let's try again.")
+        return state
+    }
+
     fun onFrame(f: FaceFrame, now: Long): State {
-        if (state is State.Passed || state is State.Failed) return state
-        if (now - startedAt > timeoutMs) return State.Failed("That took too long. Let's try again.").also { state = it }
+        if (tick(now) is State.Passed || state is State.Failed) return state
         state = when {
             f.faces > 1 -> { steady = 0; if (index >= 0) { index = -1; phase = 0 }; State.Hint("Only your face, please") }
             f.faces == 0 -> { steady = 0; State.Hint("Fit your face in the circle") }
@@ -61,9 +66,10 @@ class LivenessCheck(val challenges: List<Challenge> = random(), private val time
             Challenge.Blink -> {
                 if (l == null || r == null) return false
                 when (phase) {
-                    0 -> if (l > 0.7f && r > 0.7f) phase = 1
-                    1 -> if (l < 0.3f && r < 0.3f) phase = 2
-                    2 -> if (l > 0.7f && r > 0.7f) return true
+                    // Thresholds kept loose enough for glasses and dim offices (ML Kit scores drop for both).
+                    0 -> if (l > OPEN && r > OPEN) phase = 1
+                    1 -> if (l < CLOSED && r < CLOSED) phase = 2
+                    2 -> if (l > OPEN && r > OPEN) return true
                 }
                 false
             }
@@ -75,8 +81,8 @@ class LivenessCheck(val challenges: List<Challenge> = random(), private val time
                 false
             }
             Challenge.Smile -> {
-                if ((f.smiling ?: 0f) > 0.8f) phase++ else phase = 0
-                phase >= 3
+                if ((f.smiling ?: 0f) > 0.7f) phase++ else phase = 0
+                phase >= 2
             }
         }
     }
@@ -84,6 +90,8 @@ class LivenessCheck(val challenges: List<Challenge> = random(), private val time
     companion object {
         const val MIN_FACE = 0.25f
         const val STEADY_FRAMES = 5
+        const val OPEN = 0.55f
+        const val CLOSED = 0.35f
         fun random(rng: Random = Random.Default): List<Challenge> = Challenge.entries.shuffled(rng).take(2)
     }
 }

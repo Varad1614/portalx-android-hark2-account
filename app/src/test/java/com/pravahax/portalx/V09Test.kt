@@ -40,8 +40,8 @@ class V09Test {
 
     @Test fun livenessChallengesAreTwoDistinct() {
         repeat(20) { val r = LivenessCheck.random(kotlin.random.Random(it)); assertEquals(2, r.toSet().size) }
-        assertEquals(mapOf("liveness" to "passed", "livenessChallenges" to "blink,smile"), LivenessResult(true, listOf("blink", "smile")).formFields())
-        assertEquals(mapOf("liveness" to "unavailable"), LivenessResult(false).formFields())
+        assertEquals("X-PortalX-Liveness" to "passed; challenges=blink,smile", LivenessResult(true, listOf("blink", "smile")).header())
+        assertEquals("X-PortalX-Liveness" to "unavailable", LivenessResult(false).header())
     }
 
     @Test fun attendanceInsights() {

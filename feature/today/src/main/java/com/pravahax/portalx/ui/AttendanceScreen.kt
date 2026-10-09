@@ -116,8 +116,11 @@ fun rememberAttendanceController(
     val ctx = LocalContext.current
     val repo = LocalRepo.current
     val snack = LocalSnackbar.current
-    val scope = rememberCoroutineScope()
-    val act = rememberAction()
+    // v0.9.1: the punch (photo prep, location, upload) runs in the activity-wide scope: leaving the tab or scrolling
+    // the Home card away used to cancel it silently before it was sent.
+    val localScope = rememberCoroutineScope()
+    val scope = LocalAppScope.current ?: localScope
+    val act = rememberAction(longLived = true)
     val location = remember(locationSource) { locationSource ?: PlatformLocationSource(ctx.applicationContext) }
     // Saveable: the camera app often causes our process to be killed; the result must still be applied.
     var pendingMode by rememberSaveable { mutableStateOf<String?>(null) }
@@ -204,7 +207,13 @@ fun rememberAttendanceController(
         val mode = permissionFor; permissionFor = null
         if (mode != null) {
             if (granted) proceed(mode)
-            else scope.launch { snack.showSnackbar("PortalX needs the camera for your ${if (mode == "in") "check-in" else "check-out"} selfie. You can allow it in Settings.") }
+            else scope.launch {
+                // After two denials Android stops showing the prompt, so the way out must be a button, not advice.
+                val r = snack.showSnackbar("PortalX needs the camera for your ${if (mode == "in") "check-in" else "check-out"} selfie.", actionLabel = "Settings", duration = SnackbarDuration.Long)
+                if (r == SnackbarResult.ActionPerformed) runCatching {
+                    ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", ctx.packageName, null)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+            }
         }
     }
 
