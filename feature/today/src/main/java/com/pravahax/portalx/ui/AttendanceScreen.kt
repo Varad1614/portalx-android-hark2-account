@@ -130,15 +130,12 @@ fun rememberAttendanceController(
     var launchedAt by remember { mutableLongStateOf(0L) }
     val busy = processing || act.isRunning("attendance")
 
-    val camera = rememberLauncherForActivityResult(TakeSelfie()) { ok ->
-        val mode = pendingMode; val path = pendingPath
-        pendingMode = null; pendingPath = null
-        val file = path?.let { File(it) }
-        if (!ok || mode == null || file == null || !file.exists()) {
-            file?.delete()
-            if (!ok && mode != null) scope.launch { snack.showSnackbar(if (mode == "in") "Check-in cancelled — no selfie taken." else "Check-out cancelled — no selfie taken.") }
-            return@rememberLauncherForActivityResult
-        }
+    // v0.9: the in-app liveness camera for this mode ("in" | "out"), and the file it captures to.
+    var livenessFor by rememberSaveable { mutableStateOf<String?>(null) }
+    var livenessPath by rememberSaveable { mutableStateOf<String?>(null) }
+    val cancelled = { mode: String -> scope.launch { snack.showSnackbar(if (mode == "in") "Check-in cancelled — no selfie taken." else "Check-out cancelled — no selfie taken.") } }
+
+    fun submit(mode: String, file: File, liveness: LivenessResult) {
         processing = true
         scope.launch {
             // Location is best-effort metadata: fetched in parallel with the photo, ≤ 5 s, null on denial/timeout.
@@ -165,14 +162,27 @@ fun rememberAttendanceController(
                     }
                 }) {
                 ran[0] = true
-                recorded = repo.punch(if (mode == "in") Fn.CheckIn else Fn.CheckOut, selfie, fix)
+                recorded = repo.punch(if (mode == "in") Fn.CheckIn else Fn.CheckOut, selfie, fix, liveness)
             }
             // The runner ignores a duplicate tap; don't leave the processed photo behind in that case.
             if (!act.isRunning("attendance") && !ran[0]) selfie?.delete()
         }
     }
 
-    fun openCamera(mode: String) {
+    // Fallback when liveness can't run here: the system camera app (sent as liveness=unavailable).
+    val camera = rememberLauncherForActivityResult(TakeSelfie()) { ok ->
+        val mode = pendingMode; val path = pendingPath
+        pendingMode = null; pendingPath = null
+        val file = path?.let { File(it) }
+        if (!ok || mode == null || file == null || !file.exists()) {
+            file?.delete()
+            if (!ok && mode != null) cancelled(mode)
+            return@rememberLauncherForActivityResult
+        }
+        submit(mode, file, LivenessResult(false))
+    }
+
+    fun openSystemCamera(mode: String) {
         try {
             val f = newSelfieFile(ctx)
             val uri: Uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".files", f)
@@ -184,6 +194,35 @@ fun rememberAttendanceController(
         } catch (e: Exception) {
             pendingMode = null; pendingPath = null
             scope.launch { snack.showSnackbar("Couldn't open the camera. Please try again.") }
+        }
+    }
+
+    fun startLiveness(mode: String) { livenessPath = newSelfieFile(ctx).path; livenessFor = mode }
+    // The app declares CAMERA (for the liveness camera), so Android also requires it for the system camera intent.
+    fun proceed(mode: String) = if (LivenessSupport.available(ctx)) startLiveness(mode) else openSystemCamera(mode)
+    val cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val mode = permissionFor; permissionFor = null
+        if (mode != null) {
+            if (granted) proceed(mode)
+            else scope.launch { snack.showSnackbar("PortalX needs the camera for your ${if (mode == "in") "check-in" else "check-out"} selfie. You can allow it in Settings.") }
+        }
+    }
+
+    /** v0.9: liveness check in-app when the device supports it, otherwise the system camera. */
+    fun openCamera(mode: String) {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) proceed(mode)
+        else { permissionFor = mode; try { cameraPermission.launch(android.Manifest.permission.CAMERA) } catch (e: Exception) { permissionFor = null; proceed(mode) } }
+    }
+
+    livenessFor?.let { mode ->
+        val out = File(livenessPath ?: newSelfieFile(ctx).path.also { livenessPath = it })
+        LivenessDialog(out) { r ->
+            livenessFor = null; livenessPath = null
+            when (r) {
+                is LivenessOutcome.Passed -> submit(mode, r.file, LivenessResult(true, r.challenges))
+                LivenessOutcome.Cancelled -> { out.delete(); cancelled(mode) }
+                LivenessOutcome.Unavailable -> { out.delete(); openSystemCamera(mode) }
+            }
         }
     }
 
@@ -250,7 +289,7 @@ fun weekWorkedSeconds(rows: List<AttendanceRecord>, today: LocalDate = Dates.tod
 }
 
 @Composable
-fun AttendanceScreen(user: SessionUser) {
+fun AttendanceScreen(user: SessionUser, onInsights: () -> Unit = {}) {
     val repo = LocalRepo.current
     val online = LocalOnline.current
     val today = rememberResource(Endpoint.AttendanceToday)
@@ -368,7 +407,7 @@ fun AttendanceScreen(user: SessionUser) {
         val rows = history.data.orEmpty()
         item(key = "hist-h") {
             val week = weekWorkedSeconds(rows)
-            SectionHeader("History")
+            SectionHeader("History", "Insights", onInsights)
             if (week > 0) Text("This week: ${fmtDuration(week)} worked", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         when {

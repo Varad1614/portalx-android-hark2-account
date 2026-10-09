@@ -26,3 +26,11 @@ Fully native Android client for PortalX, talking only to the PortalX Mobile Gate
   - **Home-screen widget.** "PortalX Today": attendance status, open tasks and approvals waiting. Reads only the on-device cache, never the network; shows nothing personal when signed out.
 - Tests: `./gradlew :app:testDebugUnitTest` (Robolectric; Room tests use the bundled JVM SQLite driver so they run on aarch64 hosts too).
 - Reports: `PortalX-Audit-v0.2.0.pdf`, `PortalX-Value-Report-v0.3.0.pdf`
+
+## v0.9.0 — polish
+
+- **Liveness check-in selfie.** On devices with a front camera and Google Play services, check-in/out opens an in-app camera (CameraX + ML Kit face detection, model delivered by Play services) that asks for two random challenges (blink, head turn, smile), one face only, then captures the selfie. Otherwise it falls back to the system camera. The punch sends `liveness=passed|unavailable` and `livenessChallenges` (e.g. `blink,turn`); the gateway decides the policy. Camera permission is now required for selfies.
+- **Insights.** Attendance → History → Insights (also More → My insights): days present, streak, average check-in and day length, on-time rate, a 14-day hours chart and leave used. Computed on-device.
+- **Search.** Search icon on Home: one offline search across tasks, people, projects, meetings, announcements and documents the user can see.
+- **Certificate pinning** for `portal.pravahax.com` in `network_security_config.xml`: CA SPKI pins (ISRG Root YE/X2/X1, backups GTS Root R1/R4), expiring 2027-10-01 as a failsafe. Refresh pins and the date in a release before then, or if the host changes CA.
+- **Baseline Profile** (`app/src/main/baseline-prof.txt`) + ProfileInstaller for faster cold start, including sideloaded installs.

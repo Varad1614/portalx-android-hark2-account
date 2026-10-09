@@ -21,8 +21,8 @@ android {
         applicationId = "com.pravahax.portalx.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.8.0"
+        versionCode = 14
+        versionName = "0.9.0"
     }
     signingConfigs {
         create("release") {
@@ -71,6 +71,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // v0.9: installs app/src/main/baseline-prof.txt on sideloaded (non-Play) installs too.
+    implementation("androidx.profileinstaller:profileinstaller:1.3.1")
     // v0.8: push alerts.
     implementation(platform("com.google.firebase:firebase-bom:33.4.0"))
     implementation("com.google.firebase:firebase-messaging")

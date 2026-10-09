@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- v0.8: push alerts (FCM). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- v0.9: in-app liveness camera (CameraX). -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <!-- v0.6: one best-effort fix attached to check-in/out (foreground only, never required). -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -13,6 +15,7 @@
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <uses-feature android:name="android.hardware.location.network" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
 
     <queries>
         <intent>

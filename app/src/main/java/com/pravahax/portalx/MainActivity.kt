@@ -210,7 +210,7 @@ private val titles = mapOf(
     "home" to "", "attendance" to "Attendance", "tasks" to "Tasks", "calendar" to "Calendar", "more" to "More",
     "leave" to "Leave", "meetings" to "Meetings", "announcements" to "Announcements", "directory" to "Directory", "profile" to "Profile", "password" to "Security",
     "notifications" to "Notifications", "projects" to "Projects", "documents" to "Documents", "performance" to "Performance", "teams" to "Teams",
-    "users" to "Users", "access" to "Access control", "approvals" to "Approvals", "audit" to "Audit logs", "settings" to "Company settings",
+    "users" to "Users", "access" to "Access control", "approvals" to "Approvals", "insights" to "Insights", "search" to "Search", "audit" to "Audit logs", "settings" to "Company settings",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -268,6 +268,7 @@ private fun MainShell(user: SessionUser, online: Boolean, refreshMe: suspend () 
                         navigationIcon = { if (!isTab) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") } },
                         actions = {
                             if (route == "home") {
+                                IconButton(onClick = { go("search") }) { Icon(Icons.Outlined.Search, "Search") }
                                 IconButton(onClick = { go("notifications") }) { Icon(Icons.Outlined.Notifications, "Notifications") }
                                 IconButton(onClick = { go("profile") }, modifier = Modifier.semantics { contentDescription = "Your profile" }) { Avatar(user.name, 32.dp) }
                             }
@@ -327,12 +328,14 @@ private fun MainShell(user: SessionUser, online: Boolean, refreshMe: suspend () 
                 popEnterTransition = { if (reduce) EnterTransition.None else fadeIn(tween(220)) },
                 popExitTransition = { if (reduce) ExitTransition.None else fadeOut(tween(160)) + slideOutHorizontally(tween(220)) { it / 14 } }) {
                 composable("home") { HomeScreen(user, ::go) }
-                composable("attendance") { AttendanceScreen(user) }
+                composable("attendance") { AttendanceScreen(user) { go("insights") } }
                 composable("tasks") { TasksScreen(user, createTask) { createTask = false } }
                 composable("calendar") { CalendarScreen() }
                 composable("more") { MoreScreen(user, ::go, askLogout, refreshMe) }
                 composable("leave") { LeaveScreen(user, applyLeave) { applyLeave = false } }
                 composable("approvals") { ApprovalsScreen(user) }
+                composable("insights") { InsightsScreen() }
+                composable("search") { SearchScreen(user, ::go) { person = it } }
                 composable("meetings") { MeetingsScreen() }
                 composable("announcements") { AnnouncementsScreen() }
                 composable("directory") { DirectoryScreen { person = it } }

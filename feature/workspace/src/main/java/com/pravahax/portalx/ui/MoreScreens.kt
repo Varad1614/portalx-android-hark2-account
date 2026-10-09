@@ -71,6 +71,7 @@ fun MoreScreen(user: SessionUser, navigate: (String) -> Unit, onLogout: () -> Un
             SectionCard(padding = PaddingValues(Space.sm)) {
                 if (user.canApproveLeave || user.canApproveCorrections) HubRow(Icons.Outlined.Inbox, "Approvals", "Leave and attendance corrections") { navigate("approvals") }
                 HubRow(Icons.Outlined.BeachAccess, "Leave", "Balances, requests and approvals") { navigate("leave") }
+                HubRow(Icons.Outlined.Insights, "My insights", "Attendance trends and leave used") { navigate("insights") }
                 HubRow(Icons.Outlined.Groups, "Meetings", "Upcoming and past") { navigate("meetings") }
                 HubRow(Icons.Outlined.Campaign, "Announcements", "Company updates") { navigate("announcements") }
                 if (user.canReadPeople) HubRow(Icons.Outlined.Badge, "Directory", "Find a colleague") { navigate("directory") }

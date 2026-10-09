@@ -331,16 +331,17 @@ class Repo(
 
     /**
      * Check-in / check-out as multipart/form-data: `selfie` (JPEG file; required for check-in, optional for check-out),
-     * optional `latitude`/`longitude`/`accuracyMeters`, and `deviceId`. Never auto-retried (writeClient).
+     * optional `latitude`/`longitude`/`accuracyMeters`, `deviceId`, and (v0.9) `liveness`/`livenessChallenges`. Never auto-retried (writeClient).
      * [selfie] is deleted once the upload has finished, whatever the outcome.
      * @return the server's `meta.locationRecorded` (false when absent).
      */
-    suspend fun punch(fn: Fn, selfie: File?, fix: Fix?): Boolean {
+    suspend fun punch(fn: Fn, selfie: File?, fix: Fix?, liveness: LivenessResult? = null): Boolean {
         require(fn == Fn.CheckIn || fn == Fn.CheckOut) { "punch is only for check-in/out" }
         try {
             if (fn == Fn.CheckIn && selfie == null) throw PortalException("A selfie is required to check in.")
             val data = buildJsonObject {
                 fix?.formFields()?.forEach { (k, v) -> put(k, v) }
+                if (selfie != null) liveness?.formFields()?.forEach { (k, v) -> put(k, v) }
                 put("deviceId", api.deviceId)
             }
             val env = api.callEnvelope(fn, data, listOfNotNull(selfie?.let { FilePart("selfie", it, "image/jpeg", "selfie.jpg") }))

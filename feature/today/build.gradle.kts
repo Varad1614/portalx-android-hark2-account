@@ -16,4 +16,10 @@ android {
 
 dependencies {
     implementation(project(":core:ui"))
+    // v0.9 liveness: CameraX preview/analysis/capture + ML Kit face detection (model delivered by Play services, not bundled).
+    val camerax = "1.3.4"
+    implementation("androidx.camera:camera-camera2:$camerax")
+    implementation("androidx.camera:camera-lifecycle:$camerax")
+    implementation("androidx.camera:camera-view:$camerax")
+    implementation("com.google.android.gms:play-services-mlkit-face-detection:17.1.0")
 }

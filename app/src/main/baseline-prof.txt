@@ -1,0 +1,5 @@
+# v0.9 Baseline Profile: methods ART compiles ahead of time at install, so cold start and first scroll skip the JIT.
+# Covers all PortalX code (activity, DI, auth, screens, data and network layers; small enough to include whole).
+# Compose and AndroidX ship their own profiles. A Macrobenchmark BaselineProfileRule run on a device can tighten this later.
+HSPLcom/pravahax/portalx/**->**(**)**
+Lcom/pravahax/portalx/**;

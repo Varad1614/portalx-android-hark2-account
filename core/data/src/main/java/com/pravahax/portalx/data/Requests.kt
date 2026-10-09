@@ -43,3 +43,11 @@ fun TaskStatusRequest.toJson(): JsonElement = requestJson.encodeToJsonElement(th
 fun TaskCommentRequest.toJson(): JsonElement = requestJson.encodeToJsonElement(this)
 fun CreateTaskRequest.toJson(): JsonElement = requestJson.encodeToJsonElement(this)
 fun DecisionRequest.toJson(): JsonElement = requestJson.encodeToJsonElement(this)
+
+/** v0.9: the on-device liveness result sent with a check-in/out selfie. [passed] false means the check couldn't run. */
+data class LivenessResult(val passed: Boolean, val challenges: List<String> = emptyList()) {
+    fun formFields(): Map<String, String> = buildMap {
+        put("liveness", if (passed) "passed" else "unavailable")
+        if (challenges.isNotEmpty()) put("livenessChallenges", challenges.joinToString(","))
+    }
+}
