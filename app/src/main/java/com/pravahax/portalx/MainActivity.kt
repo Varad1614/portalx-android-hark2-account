@@ -57,6 +57,9 @@ import com.pravahax.portalx.data.Validate
 import com.pravahax.portalx.data.obj
 import com.pravahax.portalx.net.Fn
 import com.pravahax.portalx.net.PortalException
+import com.pravahax.portalx.net.RefreshResult
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import com.pravahax.portalx.ui.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -136,6 +139,15 @@ fun PortalApp(repo: Repo, online: Boolean = true, startRoute: String = "home") {
             // SignedIn from cache: keep working offline; screens show their own banners.
         } catch (e: Exception) {
             if (auth !is Auth.SignedIn) auth = Auth.Unavailable("Portal One can't be reached right now.")
+        }
+    }
+
+    // v0.6: on app start and every resume, rotate the session if < 48 h is left (single-flight inside PortalApi;
+    // skipped while a write is in flight). A 401 from auth/refresh means the session is gone: sign out cleanly.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (repo.api.hasSession()) scope.launch {
+            val r = try { repo.refreshSession() } catch (e: CancellationException) { throw e } catch (e: Exception) { RefreshResult.Failed }
+            if (r == RefreshResult.SignedOut) signOut("Your session expired. Please sign in again.")
         }
     }
 
