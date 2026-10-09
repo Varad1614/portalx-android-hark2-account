@@ -2,12 +2,7 @@ package com.pravahax.portalx.ui
 
 import android.content.ActivityNotFoundException
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Matrix
-import android.media.ExifInterface
 import android.net.Uri
-import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -36,12 +31,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import com.pravahax.portalx.data.*
+import com.pravahax.portalx.location.BestEffortLocation
+import com.pravahax.portalx.location.LocationSource
+import com.pravahax.portalx.location.PlatformLocationSource
+import com.pravahax.portalx.media.Selfie
 import com.pravahax.portalx.net.Fn
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
@@ -51,44 +50,35 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 // ---------- selfie handling ----------
-private const val SELFIE_MAX_EDGE = 960
+internal fun selfieDir(ctx: Context): File = File(ctx.cacheDir, "selfies").apply { mkdirs() }
 
 internal fun newSelfieFile(ctx: Context): File {
-    val dir = File(ctx.cacheDir, "selfies").apply { mkdirs() }
+    val dir = selfieDir(ctx)
     dir.listFiles()?.forEach { if (System.currentTimeMillis() - it.lastModified() > 3_600_000) it.delete() } // sweep leftovers
     return File(dir, "selfie-${System.currentTimeMillis()}.jpg")
 }
 
 /**
- * Decodes the full-resolution capture with subsampling (never loads a 12 MP bitmap), applies EXIF rotation,
- * scales to ≤ 960 px on the long edge and returns a JPEG data URL like the web (canvas.toDataURL("image/jpeg", .8)).
- * Runs off the main thread; always deletes the file.
+ * Turns the camera capture into the upload file (≤ 1280 px, EXIF orientation applied, JPEG q80, no EXIF).
+ * Runs off the main thread; always deletes the original capture. The returned file is deleted by Repo.punch
+ * once the upload finishes.
  */
-internal suspend fun selfieDataUrl(file: File): String = withContext(Dispatchers.Default) {
+internal suspend fun prepareSelfie(ctx: Context, capture: File): File = withContext(Dispatchers.Default) {
+    val out = File(selfieDir(ctx), "upload-${System.currentTimeMillis()}.jpg")
     try {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(file.path, bounds)
-        require(bounds.outWidth > 0 && bounds.outHeight > 0) { "empty capture" }
-        var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= SELFIE_MAX_EDGE) sample *= 2
-        val decoded = BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = sample })
-            ?: error("decode failed")
-        val rotation = runCatching {
-            when (ExifInterface(file.path).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) {
-                ExifInterface.ORIENTATION_ROTATE_90 -> 90f; ExifInterface.ORIENTATION_ROTATE_180 -> 180f
-                ExifInterface.ORIENTATION_ROTATE_270 -> 270f; else -> 0f
-            }
-        }.getOrDefault(0f)
-        val scale = minOf(1f, SELFIE_MAX_EDGE.toFloat() / maxOf(decoded.width, decoded.height))
-        val m = Matrix().apply { if (scale < 1f) postScale(scale, scale); if (rotation != 0f) postRotate(rotation) }
-        val out = if (scale < 1f || rotation != 0f) Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, m, true) else decoded
-        val bytes = ByteArrayOutputStream().use { s -> out.compress(Bitmap.CompressFormat.JPEG, 80, s); s.toByteArray() }
-        if (out !== decoded) out.recycle()
-        decoded.recycle()
-        "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
+        Selfie.process(capture, out)
+    } catch (e: Throwable) {
+        out.delete(); throw e
     } finally {
-        file.delete()
+        capture.delete()
     }
+}
+
+/** The small post-punch hint, driven by the server's meta.locationRecorded. */
+internal fun locationHint(mode: String, locationRecorded: Boolean): String = when {
+    locationRecorded -> "Location recorded"
+    mode == "in" -> "Checked in without location"
+    else -> "Checked out without location"
 }
 
 val LocalOnline = compositionLocalOf { true }
@@ -116,15 +106,22 @@ class AttendanceController internal constructor(
 )
 
 @Composable
-fun rememberAttendanceController(onAlreadyDone: () -> Unit = {}): AttendanceController {
+fun rememberAttendanceController(
+    onAlreadyDone: () -> Unit = {},
+    locationSource: LocationSource? = null,
+): AttendanceController {
     val ctx = LocalContext.current
     val repo = LocalRepo.current
     val snack = LocalSnackbar.current
     val scope = rememberCoroutineScope()
     val act = rememberAction()
+    val location = remember(locationSource) { locationSource ?: PlatformLocationSource(ctx.applicationContext) }
     // Saveable: the camera app often causes our process to be killed; the result must still be applied.
     var pendingMode by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingPath by rememberSaveable { mutableStateOf<String?>(null) }
+    // Location rationale / system permission prompt in progress for this mode ("in" | "out").
+    var rationaleFor by rememberSaveable { mutableStateOf<String?>(null) }
+    var permissionFor by rememberSaveable { mutableStateOf<String?>(null) }
     var processing by remember { mutableStateOf(false) }
     var confirmCheckout by rememberSaveable { mutableStateOf(false) }
     var launchedAt by remember { mutableLongStateOf(0L) }
@@ -141,24 +138,38 @@ fun rememberAttendanceController(onAlreadyDone: () -> Unit = {}): AttendanceCont
         }
         processing = true
         scope.launch {
-            val selfie = try { selfieDataUrl(file) } catch (e: Throwable) { null } finally { processing = false }
-            if (selfie == null) { snack.showSnackbar("Couldn't read the photo. Please try again."); return@launch }
+            // Location is best-effort metadata: fetched in parallel with the photo, ≤ 5 s, null on denial/timeout.
+            val fixJob = async { BestEffortLocation.fix(location) }
+            val selfie = try { prepareSelfie(ctx, file) } catch (e: Throwable) { null }
+            if (selfie == null && mode == "in") {
+                fixJob.cancel(); processing = false
+                snack.showSnackbar("Couldn't read the photo. Please try again."); return@launch
+            }
+            val fix = try { fixJob.await() } catch (e: Exception) { null } finally { processing = false }
             val now = ZonedDateTime.now(AppZone).format(DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH))
-            act("attendance", if (mode == "in") "Checked in at $now. Have a great day!" else "Checked out at $now. See you tomorrow!",
+            var recorded = false
+            val ran = booleanArrayOf(false)
+            act("attendance", null,
                 onError = { e ->
                     // Already done on another device / a retried request: just show the real state.
                     if (e.message?.contains("already", true) == true) { onAlreadyDone(); scope.launch { snack.showSnackbar(e.message ?: "") }; true } else false
+                },
+                onDone = {
+                    val msg = if (mode == "in") "Checked in at $now. Have a great day!" else "Checked out at $now. See you tomorrow!"
+                    scope.launch {
+                        snack.currentSnackbarData?.dismiss()
+                        snack.showSnackbar("$msg\n${locationHint(mode, recorded)}")
+                    }
                 }) {
-                repo.act(if (mode == "in") Fn.CheckIn else Fn.CheckOut, buildJsonObject { put("selfie", selfie) })
+                ran[0] = true
+                recorded = repo.punch(if (mode == "in") Fn.CheckIn else Fn.CheckOut, selfie, fix)
             }
+            // The runner ignores a duplicate tap; don't leave the processed photo behind in that case.
+            if (!act.isRunning("attendance") && !ran[0]) selfie?.delete()
         }
     }
 
-    fun capture(mode: String) {
-        if (busy) return
-        // A double tap must not open the camera twice (the second launch would orphan the first file).
-        if (System.currentTimeMillis() - launchedAt < 1500L) return
-        launchedAt = System.currentTimeMillis()
+    fun openCamera(mode: String) {
         try {
             val f = newSelfieFile(ctx)
             val uri: Uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".files", f)
@@ -173,6 +184,43 @@ fun rememberAttendanceController(onAlreadyDone: () -> Unit = {}): AttendanceCont
         }
     }
 
+    // Whatever the user answers, the punch continues to the camera: location never blocks check-in.
+    val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
+        val mode = permissionFor; permissionFor = null
+        if (mode != null) openCamera(mode)
+    }
+
+    fun capture(mode: String) {
+        if (busy) return
+        // A double tap must not open the camera twice (the second launch would orphan the first file).
+        if (System.currentTimeMillis() - launchedAt < 1500L) return
+        launchedAt = System.currentTimeMillis()
+        if (BestEffortLocation.shouldAsk(ctx)) { rationaleFor = mode; return }
+        openCamera(mode)
+    }
+
+    rationaleFor?.let { mode ->
+        val skip = { BestEffortLocation.markAsked(ctx); rationaleFor = null; openCamera(mode) }
+        AlertDialog(
+            onDismissRequest = skip,
+            icon = { Icon(Icons.Outlined.LocationOn, null) },
+            title = { Text("Add your location to attendance?", style = MaterialTheme.typography.headlineSmall) },
+            text = {
+                Text("PortalX can attach your location to each check-in and check-out so your attendance record shows where you clocked in. " +
+                    "It's read once, only when you tap Check in or Check out — never in the background. " +
+                    "If you'd rather not, you can still check in; it just won't include a location.", style = MaterialTheme.typography.bodyMedium)
+            },
+            confirmButton = {
+                Button(onClick = {
+                    BestEffortLocation.markAsked(ctx); rationaleFor = null; permissionFor = mode
+                    try { permissions.launch(BestEffortLocation.PERMISSIONS) } catch (e: Exception) { permissionFor = null; openCamera(mode) }
+                }) { Text("Continue") }
+            },
+            dismissButton = { TextButton(onClick = skip) { Text("Not now") } },
+            shape = MaterialTheme.shapes.large,
+            containerColor = MaterialTheme.colorScheme.surface,
+        )
+    }
     if (confirmCheckout) ConfirmDialog(
         "Check out for today?", "This ends your working day at ${ZonedDateTime.now(AppZone).format(DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH))} IST and can't be undone from the app. You'll take a quick selfie next.",
         "Take selfie & check out", onConfirm = { capture("out") }, onDismiss = { confirmCheckout = false },
