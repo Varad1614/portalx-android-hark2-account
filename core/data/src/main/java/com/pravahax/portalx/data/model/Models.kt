@@ -50,8 +50,20 @@ data class AttendanceToday(
     val breakSeconds: Long, val leaveType: String?, val lastBreakStart: String?,
 ) {
     companion object {
-        fun from(e: JsonElement?): AttendanceToday? = e.obj()?.let { t ->
-            AttendanceToday(
+        /** No attendance row yet today: the gateway answers `data: null` until the first check-in. */
+        val NotStarted = AttendanceToday(null, null, false, false, 0, null, null)
+
+        /**
+         * v0.9.2: `data: null` (not checked in yet) is a real answer, "not started", not a load failure. Treating it
+         * as unknown hid the Check in button every morning. A row dated another day (stale cache across midnight)
+         * also means today hasn't started.
+         */
+        fun from(e: JsonElement?, day: java.time.LocalDate = java.time.LocalDate.now(AppZone)): AttendanceToday? {
+            if (e is JsonNull) return NotStarted
+            val t = e.obj() ?: return null
+            val date = t.str("attendance_date", "attendanceDate")?.let(::istDate)
+            if (date != null && date != day) return NotStarted
+            return AttendanceToday(
                 t.str("check_in", "checkIn"), t.str("check_out", "checkOut"), t.bool("onLeave", "on_leave"),
                 t.bool("is_on_break", "isOnBreak"), (t.num("total_break_seconds") ?: 0.0).toLong(), t.str("leaveType"),
                 t.str("last_break_start", "lastBreakStart"),
@@ -59,6 +71,12 @@ data class AttendanceToday(
         }
     }
 }
+
+/** "2026-10-09", or a timestamp ("2026-10-08T18:30:00.000Z" = IST midnight) as an IST calendar date; null if unparseable. */
+internal fun istDate(v: String): java.time.LocalDate? = runCatching {
+    if (v.length <= 10) java.time.LocalDate.parse(v)
+    else java.time.OffsetDateTime.parse(v).atZoneSameInstant(AppZone).toLocalDate()
+}.getOrNull()
 
 data class AttendanceRecord(val date: String?, val checkIn: String?, val checkOut: String?, val breakSeconds: Long, val status: String?, override val key: String?) : Keyed {
     companion object {

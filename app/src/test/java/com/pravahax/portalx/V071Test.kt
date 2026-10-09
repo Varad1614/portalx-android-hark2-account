@@ -30,7 +30,7 @@ class V071Test {
             assertTrue(e.decode(j("""{"not":"a list"}""")).isEmpty())
             assertTrue(e.decode(j("""[1, "x", null, {"id":1}]""")).size <= 1)
         }
-        assertNull(Endpoint.AttendanceToday.decode(JsonNull))
+        assertEquals(AttendanceToday.NotStarted, Endpoint.AttendanceToday.decode(JsonNull)) // null = not checked in yet (v0.9.2)
         assertNull(Endpoint.TaskDetail.decode(j("[]")))
         assertNull(Endpoint.Settings.decode(j("42")))
         assertTrue(Endpoint.MyLeave.decode(j("\"x\"")).balances.isEmpty())

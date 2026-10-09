@@ -93,6 +93,19 @@ class V091Test {
         assertEquals("dev-1", s.get("deviceId"))
     }
 
+    /** The v0.9.1 field bug: `data: null` (not checked in yet) rendered "couldn't be loaded" and hid Check in. */
+    @Test fun notCheckedInYetIsNotStartedNotUnknown() {
+        val j = kotlinx.serialization.json.Json
+        assertEquals(AttendanceToday.NotStarted, AttendanceToday.from(kotlinx.serialization.json.JsonNull))
+        assertNull(AttendanceToday.from(null)) // nothing loaded yet stays "unknown"
+        val d = LocalDate.of(2026, 10, 9)
+        val row = """{"attendance_date":"%s","check_in":"2026-10-09T05:45:00.000Z","check_out":null}"""
+        assertEquals("2026-10-09T05:45:00.000Z", AttendanceToday.from(j.parseToJsonElement(row.format("2026-10-09")), d)!!.checkIn)
+        // pg DATE serialised as UTC midnight of the IST day must still count as today
+        assertNotNull(AttendanceToday.from(j.parseToJsonElement(row.format("2026-10-08T18:30:00.000Z")), d)!!.checkIn)
+        assertEquals(AttendanceToday.NotStarted, AttendanceToday.from(j.parseToJsonElement(row.format("2026-10-08")), d))
+    }
+
     @Test fun widgetDoesNotShowYesterdaysPunchAfterMidnight() {
         val y = AttendanceToday.from(kotlinx.serialization.json.Json.parseToJsonElement("""{"check_in":"2026-10-08T09:30:00+05:30","check_out":"2026-10-08T18:00:00+05:30"}"""))
         assertEquals("Open PortalX to sync", WidgetSummary.of(y, 0, 0, LocalDate.of(2026, 10, 9)).headline)
