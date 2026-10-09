@@ -1,8 +1,11 @@
 package com.pravahax.portalx.data
 
 import android.content.Context
+import com.pravahax.portalx.location.Fix
+import com.pravahax.portalx.net.FilePart
 import com.pravahax.portalx.net.Fn
 import com.pravahax.portalx.net.PortalApi
+import com.pravahax.portalx.net.RefreshResult
 import com.pravahax.portalx.net.PortalException
 import com.pravahax.portalx.security.SecureStore
 import kotlinx.coroutines.CancellationException
@@ -11,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.*
+import java.io.File
 
 // ---------- tolerant JSON helpers: the web sends a mix of camelCase and snake_case ----------
 fun JsonElement?.obj(): JsonObject? = this as? JsonObject
@@ -188,10 +192,40 @@ class Repo(context: Context, val api: PortalApi = PortalApi(context), cacheName:
         val token = r.str("compositeToken") ?: r.str("token")?.let { "$ws.$it" }
         val u = r?.get("user").obj()
         if (token == null || u == null) throw PortalException("Sign-in didn't complete. Please try again.")
-        api.token = token
+        api.startSession(token, r.num("expiresInSeconds")?.toLong())
         prefs.edit().putString("workspace", ws).putString("lastUserId", uid).apply()
         acceptUser(withAccess(u))
         return cachedMe() ?: SessionUser(u)
+    }
+
+    /**
+     * Check-in / check-out as multipart/form-data: `selfie` (JPEG file; required for check-in, optional for check-out),
+     * optional `latitude`/`longitude`/`accuracyMeters`, and `deviceId`. Never auto-retried (writeClient).
+     * [selfie] is deleted once the upload has finished, whatever the outcome.
+     * @return the server's `meta.locationRecorded` (false when absent).
+     */
+    suspend fun punch(fn: Fn, selfie: File?, fix: Fix?): Boolean {
+        require(fn == Fn.CheckIn || fn == Fn.CheckOut) { "punch is only for check-in/out" }
+        try {
+            if (fn == Fn.CheckIn && selfie == null) throw PortalException("A selfie is required to check in.")
+            val data = buildJsonObject {
+                fix?.formFields()?.forEach { (k, v) -> put(k, v) }
+                put("deviceId", api.deviceId)
+            }
+            val env = api.callEnvelope(fn, data, listOfNotNull(selfie?.let { FilePart("selfie", it, "image/jpeg", "selfie.jpg") }))
+            invalidate(Invalidation.after(fn))
+            return env.metaBool("locationRecorded") ?: false
+        } finally {
+            selfie?.delete()
+        }
+    }
+
+    /** Rotates the session token when it's close to expiry (see PortalApi.refreshIfNeeded). */
+    suspend fun refreshSession(): RefreshResult = api.refreshIfNeeded()
+
+    /** v0.8 (FCM) will call this with the real registration token. Nothing calls it in v0.6. */
+    suspend fun registerDeviceToken(token: String) {
+        api.call(Fn.DeviceToken, buildJsonObject { put("token", token); put("platform", "android"); put("deviceId", api.deviceId) })
     }
 
     /** Adds the effective permission codes (access-control/my-access) to a user object; keeps the old ones on failure. */
@@ -221,9 +255,17 @@ class Repo(context: Context, val api: PortalApi = PortalApi(context), cacheName:
 
     private fun clearCache() { cache.clear(); people = emptyMap(); _versions.value = emptyMap() }
 
-    /** Best-effort server logout (deletes the session row), then wipe the token and every cached response. Never throws. */
+    /**
+     * Best-effort server logout: unregister this device's push token, then delete the session row (both send
+     * X-Device-Id). Then wipe the token, expiry and every cached response. Never throws. The device id is kept.
+     */
     suspend fun logout() {
-        try { api.call(Fn.Logout) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        try {
+            if (api.hasSession()) {
+                try { api.call(Fn.DeviceTokenRemove, buildJsonObject { put("deviceId", api.deviceId) }) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+                if (api.hasSession()) api.call(Fn.Logout)
+            }
+        } catch (e: CancellationException) { throw e } catch (_: Exception) { }
         finally { api.clearSession(); clearCache() }
     }
 }
