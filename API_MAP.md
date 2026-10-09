@@ -65,6 +65,14 @@ Raw service rows (snake_case) are mapped to screen shapes in `data/Shapes.kt`. P
 - **notifications/device-token** `{token, platform:"android", deviceId}` — plumbing only; nothing registers a token until FCM lands (v0.8).
 - **notifications/device-token/remove** `{deviceId}` — sent on sign-out, then `auth/logout` (both carry `X-Device-Id`).
 
+## v0.7 offline outbox
+- Queueable writes: `leave/apply`, `PATCH tasks/{taskId}` (status), `tasks/{taskId}/comments`. Bodies are typed (`data/Requests.kt`).
+- Sent at once when possible. Queued **only** when the request definitely never left the device (DNS, connect or TLS failure). A timeout after sending is never queued (it may have landed).
+- Each queued write gets one `Idempotency-Key` (UUID) at creation; every attempt, including a manual "Send again", reuses it. **Gateway ask:** honour `Idempotency-Key` on these three routes (today it is only known to be honoured for documents).
+- WorkManager sends the queue when a network is available (exponential backoff from 30 s). 5xx/429 retried up to 5 times; other 4xx mark the item failed; a timeout marks it "unconfirmed" and it is never resent automatically. The banner under the top bar offers Send again / Discard.
+- Check-in/out and breaks stay online-only: the server stamps them with its own clock.
+- Sign-out (or a 401) clears the outbox with the rest of the session's data.
+
 ## Gateway fixes required (Portalx patch)
 - `POST /performance/feedback`: gateway sent giverId/revieweeId/content/score; performance-api wants fromUserId/toUserId/body/rating → always 400.
 - `POST /tasks`, `POST /projects`: gateway sent creatorId; work-api requires actorUserId (+status, memberIds) → always 400.

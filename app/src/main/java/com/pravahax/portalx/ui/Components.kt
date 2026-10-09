@@ -65,6 +65,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import com.pravahax.portalx.data.Submit
 
 // ======================= data loading =======================
 @Stable
@@ -87,51 +91,24 @@ val LocalRepo = staticCompositionLocalOf<Repo> { error("no repo") }
 val LocalSessionExpired = staticCompositionLocalOf<() -> Unit> { {} }
 val LocalSnackbar = staticCompositionLocalOf { SnackbarHostState() }
 
-private const val STALE_AFTER_MS = 60_000L
-
 /**
- * Loads [fn], shows cached data immediately, refetches when: the key changes, the user pulls to refresh,
- * a write invalidates [fn] (see Invalidation), or the app returns to the foreground after 60 s.
+ * Loads [fn] through a [ResourceViewModel] (v0.7): cached data from Room shows immediately, and the state
+ * survives rotation. Refetches when the key first appears, the user pulls to refresh, a write invalidates [fn]
+ * (see Invalidation), or the app returns to the foreground after 60 s.
  */
 @Composable
 fun rememberResource(fn: Fn, data: JsonElement? = null, key: String = fn.name, enabled: Boolean = true): Resource {
     val repo = LocalRepo.current
     val expired = LocalSessionExpired.current
-    val versions by repo.versions.collectAsState()
-    val version = versions[fn] ?: 0
-    var value by remember(key) { mutableStateOf(repo.cached(key)) }
-    var loading by remember(key) { mutableStateOf(false) }
-    var userRefresh by remember(key) { mutableStateOf(false) }
-    var error by remember(key) { mutableStateOf<String?>(null) }
-    var stale by remember(key) { mutableStateOf(false) }
-    var tick by remember(key) { mutableIntStateOf(0) }
-    var loadedAt by remember(key) { mutableLongStateOf(0L) }
-
+    // Keyed by the repo too, so a new session (or a test with a fresh repo) never sees another one's ViewModel.
+    val vm: ResourceViewModel = viewModel(key = "res:${System.identityHashCode(repo)}:$key",
+        factory = viewModelFactory { initializer { ResourceViewModel(repo, fn, data, key) } })
+    val s by vm.state.collectAsState()
+    LaunchedEffect(vm, enabled) { vm.start(enabled) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(lifecycle, key) {
-        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            if (loadedAt != 0L && System.currentTimeMillis() - loadedAt > STALE_AFTER_MS) tick++
-        }
-    }
-
-    LaunchedEffect(key, tick, version, enabled) {
-        if (!enabled) return@LaunchedEffect
-        loading = true
-        try {
-            value = repo.load(fn, data, key); error = null; stale = false
-            loadedAt = System.currentTimeMillis()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: PortalException) {
-            if (e.code == 401) expired()
-            else { stale = value != null; error = if (value != null && e.offline) "You're offline. Showing what was saved on this device." else e.message }
-        } catch (e: Exception) {
-            stale = value != null; error = "Something went wrong. Pull down to try again."
-        } finally {
-            loading = false; userRefresh = false
-        }
-    }
-    return Resource(value, loading, userRefresh && loading, error, stale) { userRefresh = true; tick++ }
+    LaunchedEffect(lifecycle, vm) { lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) { vm.onResume() } }
+    LaunchedEffect(s.sessionExpired) { if (s.sessionExpired) { vm.expiryHandled(); expired() } }
+    return Resource(s.data, s.loading, s.userRefresh && s.loading, s.error, s.stale) { vm.refresh() }
 }
 
 // ======================= actions =======================
@@ -152,7 +129,7 @@ fun rememberHaptics(): Haptics { val v = LocalView.current; return remember(v) {
 @Stable
 class ActionRunner internal constructor(
     private val running: SnapshotStateList<String>,
-    private val launch: (String, String?, suspend () -> Unit, () -> Unit, (PortalException) -> Boolean, (() -> Unit)?) -> Unit,
+    private val launch: (String, String?, suspend () -> Any?, () -> Unit, (PortalException) -> Boolean, (() -> Unit)?) -> Unit,
 ) {
     fun isRunning(key: String = DEFAULT) = key in running
     val anyRunning get() = running.isNotEmpty()
@@ -163,7 +140,7 @@ class ActionRunner internal constructor(
      */
     operator fun invoke(
         key: String = DEFAULT, success: String? = null, onError: (PortalException) -> Boolean = { false },
-        onDone: () -> Unit = {}, undo: (() -> Unit)? = null, block: suspend () -> Unit,
+        onDone: () -> Unit = {}, undo: (() -> Unit)? = null, block: suspend () -> Any?,
     ) = launch(key, success, block, onDone, onError, undo)
 
     companion object { const val DEFAULT = "default" }
@@ -186,13 +163,15 @@ fun rememberAction(): ActionRunner {
             running.add(key)
             scope.launch {
                 try {
-                    block()
+                    val outcome = block()
                     haptics.success()
                     onDone()
-                    success?.let { msg ->
+                    // v0.7: a write saved to the outbox says so instead of claiming it was sent (and offers no undo).
+                    val queued = outcome == Submit.Queued
+                    (if (queued) "Saved on this device. It'll send when you're back online." else success)?.let { msg ->
                         launch {
                             snack.currentSnackbarData?.dismiss() // newest feedback first, never a queue of stale toasts
-                            val r = snack.showSnackbar(msg, actionLabel = if (undo != null) "Undo" else null, duration = SnackbarDuration.Short)
+                            val r = snack.showSnackbar(msg, actionLabel = if (undo != null && !queued) "Undo" else null, duration = SnackbarDuration.Short)
                             if (r == SnackbarResult.ActionPerformed) undo?.invoke()
                         }
                     }
@@ -350,7 +329,37 @@ fun OfflineBar(visible: Boolean) {
         ) {
             Icon(Icons.Outlined.CloudOff, null, tint = MaterialTheme.colorScheme.inverseOnSurface, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(Space.sm))
-            Text("You're offline — showing saved data. Actions are paused.", color = MaterialTheme.colorScheme.inverseOnSurface, style = MaterialTheme.typography.labelMedium)
+            Text("You're offline — showing saved data. Leave requests and task updates send when you're back.", color = MaterialTheme.colorScheme.inverseOnSurface, style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
+/**
+ * v0.7: the offline outbox, under the top bar. Shows how many writes are waiting, and the oldest one the server
+ * refused or didn't confirm, with "Send again" (same Idempotency-Key) and "Discard".
+ */
+@Composable
+fun OutboxBar() {
+    val repo = LocalRepo.current
+    val items by repo.outbox.collectAsState(initial = emptyList())
+    val scope = rememberCoroutineScope()
+    val pending = items.count { it.state == com.pravahax.portalx.data.db.OutboxItem.STATE_PENDING }
+    val problem = items.firstOrNull { it.state != com.pravahax.portalx.data.db.OutboxItem.STATE_PENDING }
+    AnimatedVisibility(pending > 0 || problem != null, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = Space.lg, vertical = Space.xs), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+            if (pending > 0) InfoBanner("$pending change${if (pending == 1) "" else "s"} waiting to send. ${if (pending == 1) "It goes" else "They go"} out automatically once you're online.")
+            problem?.let { p ->
+                Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.medium) {
+                    Column(Modifier.fillMaxWidth().padding(start = Space.md, end = Space.xs, top = Space.sm)) {
+                        Text("${com.pravahax.portalx.data.Outbox.label(p.fn)} didn't send", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                        Text(p.lastError ?: "Portal One refused it.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                        Row(Modifier.align(Alignment.End)) {
+                            TextButton(onClick = { scope.launch { repo.discard(p.id) } }) { Text("Discard") }
+                            TextButton(onClick = { scope.launch { repo.resend(p.id) } }) { Text("Send again") }
+                        }
+                    }
+                }
+            }
         }
     }
 }

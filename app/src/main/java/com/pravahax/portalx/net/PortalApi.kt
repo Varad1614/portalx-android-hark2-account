@@ -249,9 +249,11 @@ class PortalApi(
 
     val writeInFlight: Boolean get() = writesInFlight.get() > 0
 
-    suspend fun call(fn: Fn, data: JsonElement? = null): JsonElement = callEnvelope(fn, data).data
+    /** @param idempotencyKey sent as `Idempotency-Key` on writes; the outbox reuses one key across every attempt of a queued write. */
+    suspend fun call(fn: Fn, data: JsonElement? = null, idempotencyKey: String? = null): JsonElement =
+        callEnvelope(fn, data, idempotencyKey = idempotencyKey).data
 
-    suspend fun callEnvelope(fn: Fn, data: JsonElement? = null, files: List<FilePart> = emptyList()): Envelope = withContext(Dispatchers.IO) {
+    suspend fun callEnvelope(fn: Fn, data: JsonElement? = null, files: List<FilePart> = emptyList(), idempotencyKey: String? = null): Envelope = withContext(Dispatchers.IO) {
         // Wait out an in-progress token rotation, then register as in flight (Dekker-style with the refresh's check).
         while (true) {
             gate?.await()
@@ -262,10 +264,10 @@ class PortalApi(
         if (!fn.get) writesInFlight.incrementAndGet()
         try {
             try {
-                guarded(fn, data, files)
+                guarded(fn, data, files, idempotencyKey)
             } catch (e: PortalException) {
                 // Reads are safe to retry once on a transient failure; writes never are.
-                if (fn.get && e.retryable) { delay(600); guarded(fn, data, files) } else throw e
+                if (fn.get && e.retryable) { delay(600); guarded(fn, data, files, idempotencyKey) } else throw e
             }
         } finally {
             if (!fn.get) writesInFlight.decrementAndGet()
@@ -320,10 +322,10 @@ class PortalApi(
         }
     }
 
-    private fun guarded(fn: Fn, data: JsonElement?, files: List<FilePart>): Envelope {
+    private fun guarded(fn: Fn, data: JsonElement?, files: List<FilePart>, idempotencyKey: String? = null): Envelope {
         val sent = token
         return try {
-            execute(fn, data, files)
+            execute(fn, data, files, idempotencyKey)
         } catch (e: CancellationException) {
             throw e
         } catch (e: PortalException) {
@@ -343,7 +345,7 @@ class PortalApi(
      * Builds the URL: fills `{param}` from data, sends the rest as query (GET), JSON body (writes) or, for
      * [Fn.multipart] routes, as multipart/form-data text parts plus [files].
      */
-    internal fun buildRequest(fn: Fn, data: JsonElement?, files: List<FilePart> = emptyList()): Request {
+    internal fun buildRequest(fn: Fn, data: JsonElement?, files: List<FilePart> = emptyList(), idempotencyKey: String? = null): Request {
         val fields = (data as? JsonObject)?.toMutableMap() ?: mutableMapOf()
         var path = fn.path
         Regex("\\{(\\w+)\\}").findAll(fn.path).forEach { m ->
@@ -372,13 +374,13 @@ class PortalApi(
                 require(files.isEmpty()) { "${fn.name} is not a multipart route" }
                 JsonObject(fields).toString().toRequestBody("application/json".toMediaType())
             }
-            b.header("Idempotency-Key", UUID.randomUUID().toString()) // lets the gateway drop accidental duplicates
+            b.header("Idempotency-Key", idempotencyKey ?: UUID.randomUUID().toString()) // lets the gateway drop accidental duplicates
             b.url(url.build()).method(fn.m.name, body).build()
         }
     }
 
-    private fun execute(fn: Fn, data: JsonElement?, files: List<FilePart>): Envelope {
-        val req = buildRequest(fn, data, files)
+    private fun execute(fn: Fn, data: JsonElement?, files: List<FilePart>, idempotencyKey: String? = null): Envelope {
+        val req = buildRequest(fn, data, files, idempotencyKey)
         (if (fn.get) client else writeClient).newCall(req).execute().use { resp ->
             if (resp.code in 300..399) throw PortalException("Portal One answered with an unexpected redirect (${resp.code}).", resp.code)
             val body = readCapped(resp.body)

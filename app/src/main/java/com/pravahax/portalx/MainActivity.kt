@@ -60,6 +60,13 @@ import com.pravahax.portalx.net.PortalException
 import com.pravahax.portalx.net.RefreshResult
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import com.pravahax.portalx.net.Connectivity
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 import com.pravahax.portalx.ui.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -67,7 +74,11 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    @Inject lateinit var repo: Repo
+    @Inject lateinit var connectivity: Connectivity
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -79,13 +90,12 @@ class MainActivity : ComponentActivity() {
         )
         // Privacy: the recents/overview thumbnail is blanked (attendance, directory phone numbers, etc. stay private).
         if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false)
-        val app = application as PortalXApp
         val reduceMotion = reduceMotion()
         setContent {
             PortalTheme {
-                CompositionLocalProvider(LocalRepo provides app.repo, LocalReduceMotion provides reduceMotion) {
-                    val online by app.connectivity.online.collectAsState()
-                    PortalApp(app.repo, online)
+                CompositionLocalProvider(LocalRepo provides repo, LocalReduceMotion provides reduceMotion) {
+                    val online by connectivity.online.collectAsState()
+                    PortalApp(repo, online)
                 }
             }
         }
@@ -96,80 +106,35 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** Auth state machine. Every transition is explicit; nothing signs the user out except a real 401 or "Sign out". */
-private sealed interface Auth {
-    data object Checking : Auth
-    /** Session exists but couldn't be verified and nothing is cached (server down / offline on first run). */
-    data class Unavailable(val message: String) : Auth
-    data class SignedOut(val notice: String? = null) : Auth
-    data class SignedIn(val user: SessionUser) : Auth
-}
-
 @Composable
 /** @param startRoute first tab to show (tests/screenshots); users always start on Home. */
 fun PortalApp(repo: Repo, online: Boolean = true, startRoute: String = "home") {
-    val scope = rememberCoroutineScope()
-    var auth by remember {
-        mutableStateOf<Auth>(
-            if (!repo.api.hasSession()) Auth.SignedOut() else repo.cachedMe()?.let { Auth.SignedIn(it) } ?: Auth.Checking
-        )
-    }
-    var signingOut by remember { mutableStateOf(false) }
-    var verifyTick by remember { mutableIntStateOf(0) }
-
-    // Idempotent: many screens can hit a 401 at once; only the first one runs.
-    val signOut: (String?) -> Unit = { notice ->
-        if (!signingOut) {
-            signingOut = true
-            scope.launch {
-                try { repo.logout() } finally { auth = Auth.SignedOut(notice); signingOut = false }
-            }
-        }
-    }
-
-    LaunchedEffect(verifyTick) {
-        if (!repo.api.hasSession()) return@LaunchedEffect
-        try {
-            val me = repo.me()
-            auth = if (me != null) Auth.SignedIn(me) else { repo.logout(); Auth.SignedOut("Please sign in again.") }
-        } catch (e: CancellationException) { throw e
-        } catch (e: PortalException) {
-            if (e.code == 401) signOut("Your session expired. Please sign in again.")
-            else if (auth !is Auth.SignedIn) auth = Auth.Unavailable(e.message ?: "Portal One can't be reached right now.")
-            // SignedIn from cache: keep working offline; screens show their own banners.
-        } catch (e: Exception) {
-            if (auth !is Auth.SignedIn) auth = Auth.Unavailable("Portal One can't be reached right now.")
-        }
-    }
-
-    // v0.6: on app start and every resume, rotate the session if < 48 h is left (single-flight inside PortalApi;
-    // skipped while a write is in flight). A 401 from auth/refresh means the session is gone: sign out cleanly.
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        if (repo.api.hasSession()) scope.launch {
-            val r = try { repo.refreshSession() } catch (e: CancellationException) { throw e } catch (e: Exception) { RefreshResult.Failed }
-            if (r == RefreshResult.SignedOut) signOut("Your session expired. Please sign in again.")
-        }
-    }
-
-    // Re-reads the signed-in user (pull-to-refresh on More / Profile) without leaving the shell.
-    val refreshMe: suspend () -> Unit = {
-        val me = repo.me()
-        if (me != null && auth is Auth.SignedIn) auth = Auth.SignedIn(me)
-    }
+    // v0.7: auth lives in a ViewModel (survives rotation). Keyed by repo so a test with a fresh repo gets a fresh one.
+    val vm: AppViewModel = viewModel(key = "app:${System.identityHashCode(repo)}", factory = viewModelFactory { initializer { AppViewModel(repo) } })
+    val auth by vm.auth.collectAsState()
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.onResume() }
     val reduce = LocalReduceMotion.current
 
     AnimatedContent(auth, transitionSpec = { if (reduce) EnterTransition.None togetherWith ExitTransition.None else fadeIn(tween(320)) togetherWith fadeOut(tween(200)) },
         contentKey = { it::class }, label = "auth") { a ->
         when (a) {
             Auth.Checking -> BrandSplash()
-            is Auth.Unavailable -> UnavailableScreen(a.message, onRetry = { auth = Auth.Checking; verifyTick++ }, onSignOut = { signOut(null) })
-            is Auth.SignedOut -> { SecureWindow(); LoginScreen(notice = a.notice) { auth = Auth.SignedIn(it) } }
+            is Auth.Unavailable -> UnavailableScreen(a.message, onRetry = { vm.retry() }, onSignOut = { vm.signOut(null) })
+            is Auth.SignedOut -> { SecureWindow(); LoginScreen(notice = a.notice) { vm.signedIn(it) } }
             is Auth.SignedIn ->
                 if (a.user.mustChangePassword) {
                     SecureWindow()
-                    ChangePasswordScreen(onDone = { u -> auth = Auth.SignedIn(u) }, onSignOut = { signOut(null) })
-                } else CompositionLocalProvider(LocalSessionExpired provides { signOut("Your session expired. Please sign in again.") }) {
-                    MainShell(a.user, online, refreshMe, startRoute) { signOut(null) }
+                    ChangePasswordScreen(onDone = { u -> vm.userUpdated(u) }, onSignOut = { vm.signOut(null) })
+                } else {
+                    // Screens' ViewModels (and the NavController's) live in this session's store. It is captured once,
+                    // so an exit animation never sees the next session's store, and cleared when this shell leaves for
+                    // good (sign-out, back out of the app), but kept across rotation.
+                    val owner = remember { vm.session }
+                    val activity = LocalContext.current as? Activity
+                    DisposableEffect(owner) { onDispose { if (activity?.isChangingConfigurations != true) owner.viewModelStore.clear() } }
+                    CompositionLocalProvider(LocalSessionExpired provides { vm.signOut(AppViewModel.EXPIRED) }, LocalViewModelStoreOwner provides owner) {
+                        MainShell(a.user, online, { vm.refreshMe() }, startRoute) { vm.signOut(null) }
+                    }
                 }
         }
     }
@@ -280,6 +245,7 @@ private fun MainShell(user: SessionUser, online: Boolean, refreshMe: suspend () 
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background, scrolledContainerColor = MaterialTheme.colorScheme.surface),
                     )
                     OfflineBar(!online)
+                    OutboxBar()
                 }
             },
             bottomBar = {

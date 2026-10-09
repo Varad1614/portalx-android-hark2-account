@@ -5,8 +5,12 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("com.google.devtools.ksp")
+    id("com.google.dagger.hilt.android")
 }
 val ksProps = Properties().also { p -> rootProject.file("keystore.properties").inputStream().use { p.load(it) } }
+
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
 android {
     namespace = "com.pravahax.portalx"
@@ -16,8 +20,8 @@ android {
         applicationId = "com.pravahax.portalx.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.6.0"
+        versionCode = 11
+        versionName = "0.7.0"
     }
     signingConfigs {
         create("release") {
@@ -60,6 +64,15 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // v0.7: Room (single source of truth for cached reads + the offline outbox), WorkManager (outbox sender), Hilt (DI)
+    implementation("androidx.room:room-runtime:2.7.1")
+    implementation("androidx.room:room-ktx:2.7.1")
+    ksp("androidx.room:room-compiler:2.7.1")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("com.google.dagger:hilt-android:2.52")
+    ksp("com.google.dagger:hilt-compiler:2.52")
+    // Robolectric has no native SQLite on aarch64 hosts: Room tests run on the bundled JVM driver instead.
+    testImplementation("androidx.sqlite:sqlite-bundled-jvm:2.5.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")
     testImplementation("androidx.test:core:1.6.1")

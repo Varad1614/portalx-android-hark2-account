@@ -1,5 +1,9 @@
 package com.pravahax.portalx.ui
 
+import com.pravahax.portalx.data.ApplyLeaveRequest
+import com.pravahax.portalx.data.TaskCommentRequest
+import com.pravahax.portalx.data.TaskStatusRequest
+import com.pravahax.portalx.data.toJson
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -55,8 +59,8 @@ fun TasksScreen(user: SessionUser, createRequested: Boolean, onCreateHandled: ()
         val id = t.idOf() ?: return
         val prev = t.str("status")
         act("task-${id.content}", msg, undo = prev?.takeIf { it != s }?.let { p -> {
-            act("task-undo-${id.content}", "Moved back to ${label[p] ?: pretty(p)}.") { repo.act(Fn.UpdateTaskStatus, buildJsonObject { put("taskId", id); put("status", p) }) }
-        } }) { repo.act(Fn.UpdateTaskStatus, buildJsonObject { put("taskId", id); put("status", s) }) }
+            act("task-undo-${id.content}", "Moved back to ${label[p] ?: pretty(p)}.") { repo.submit(Fn.UpdateTaskStatus, TaskStatusRequest(id, p).toJson()) }
+        } }) { repo.submit(Fn.UpdateTaskStatus, TaskStatusRequest(id, s).toJson()) }
     }
 
     RefreshList(tasks.refreshing, { tasks.refresh() }) {
@@ -200,7 +204,8 @@ private fun TaskDetailSheet(task: JsonObject, user: SessionUser, onDismiss: () -
                     IconButton(enabled = comment.isNotBlank() && !sending && id != null, onClick = {
                         val body = comment.trim()
                         Validate.comment(body)?.let { err = it; return@IconButton }
-                        act("comment", "Comment posted.", onDone = { comment = "" }) { repo.act(Fn.AddTaskComment, buildJsonObject { put("taskId", id ?: JsonNull); put("body", body) }) }
+                        val taskId = id ?: return@IconButton
+                        act("comment", "Comment posted.", onDone = { comment = "" }) { repo.submit(Fn.AddTaskComment, TaskCommentRequest(taskId, body).toJson()) }
                     }) { if (sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.AutoMirrored.Outlined.Send, "Send") }
                 })
         }
@@ -368,13 +373,13 @@ fun LeaveScreen(user: SessionUser, applyRequested: Boolean, onApplyHandled: () -
             "Reject", destructive = true, onConfirm = { decide(r, "rejected") }, onDismiss = { rejectTarget = null })
     }
     if (applying) ApplyLeaveSheet(balances, busy = act.isRunning("apply"), onDismiss = { applying = false }) { body ->
-        act("apply", "Leave request submitted.", onDone = { applying = false }) { repo.act(Fn.ApplyLeave, body) }
+        act("apply", "Leave request submitted.", onDone = { applying = false }) { repo.submit(Fn.ApplyLeave, body.toJson()) }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ApplyLeaveSheet(balances: List<JsonObject>, busy: Boolean, onDismiss: () -> Unit, onSubmit: (JsonObject) -> Unit) {
+private fun ApplyLeaveSheet(balances: List<JsonObject>, busy: Boolean, onDismiss: () -> Unit, onSubmit: (ApplyLeaveRequest) -> Unit) {
     val types = balances.mapNotNull { b -> b.idOf("typeId", "leaveTypeId", "id")?.let { it to b } }
     // Sensible defaults: the first type that still has balance, starting tomorrow for one day.
     var typeId by remember { mutableStateOf((types.firstOrNull { (it.second.num("remaining") ?: 0.0) > 0 } ?: types.firstOrNull())?.first) }
@@ -412,9 +417,7 @@ private fun ApplyLeaveSheet(balances: List<JsonObject>, busy: Boolean, onDismiss
             Button(enabled = !busy, onClick = {
                 if (check.error != null) { showErr = true; return@Button }
                 val sd = s ?: return@Button; val ed = e ?: return@Button; val tid = typeId ?: return@Button
-                onSubmit(buildJsonObject {
-                    put("leaveTypeId", tid); put("startDate", sd.toString()); put("endDate", ed.toString()); put("halfDay", half); put("reason", reason.trim())
-                })
+                onSubmit(ApplyLeaveRequest(leaveTypeId = tid, startDate = sd.toString(), endDate = ed.toString(), halfDay = half, reason = reason.trim()))
             }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = MaterialTheme.shapes.medium) { BusyLabel(busy, "Submit request") }
         }
     }

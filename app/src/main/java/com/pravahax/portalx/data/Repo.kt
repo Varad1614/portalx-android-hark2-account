@@ -7,7 +7,22 @@ import com.pravahax.portalx.net.Fn
 import com.pravahax.portalx.net.PortalApi
 import com.pravahax.portalx.net.RefreshResult
 import com.pravahax.portalx.net.PortalException
+import com.pravahax.portalx.data.db.CacheEntry
+import com.pravahax.portalx.data.db.OutboxItem
+import com.pravahax.portalx.data.db.PortalDb
+import com.pravahax.portalx.data.db.CacheDao
+import com.pravahax.portalx.data.db.OutboxDao
+import com.pravahax.portalx.data.db.MemoryCacheDao
+import com.pravahax.portalx.data.db.MemoryOutboxDao
+import com.pravahax.portalx.security.KeystoreSealer
+import com.pravahax.portalx.security.Sealer
 import com.pravahax.portalx.security.SecureStore
+import com.pravahax.portalx.sync.OutboxWorker
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.withLock
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -113,8 +128,41 @@ object Invalidation {
     }
 }
 
-/** Repository with a small encrypted offline cache: last good response per key is kept on disk. */
-class Repo(context: Context, val api: PortalApi = PortalApi(context), cacheName: String = "cache") {
+/** Writes the outbox may hold while offline (v0.7). */
+object Outbox {
+    /**
+     * Only writes whose meaning doesn't depend on *when* the server receives them. Check-in/out and breaks stay
+     * online-only: the server stamps them with its own clock, so sending one an hour late would record the wrong time.
+     */
+    val QUEUEABLE = setOf(Fn.ApplyLeave, Fn.UpdateTaskStatus, Fn.AddTaskComment)
+    /** Server errors (5xx / 429) are retried this many times before the item is shown as failed. */
+    const val MAX_ATTEMPTS = 5
+    fun label(fn: String): String = when (fn) {
+        Fn.ApplyLeave.name -> "Leave request"
+        Fn.UpdateTaskStatus.name -> "Task status change"
+        Fn.AddTaskComment.name -> "Task comment"
+        else -> "Change"
+    }
+}
+
+/** Outcome of [Repo.submit]: sent now, or saved in the outbox to send when the device is back online. */
+enum class Submit { Sent, Queued }
+
+/**
+ * Repository. v0.7: Room is the single source of truth for cached reads (screens observe [observe]; [load]
+ * refreshes it) and holds the offline outbox. Every value in Room is sealed with AES-GCM ([Sealer]); when the
+ * Keystore is unavailable the cache and outbox live in memory only, so nothing is ever written in clear.
+ */
+class Repo(
+    context: Context,
+    val api: PortalApi = PortalApi(context),
+    cacheName: String = "cache",
+    private val sealer: Sealer? = KeystoreSealer.createOrNull(),
+    db: PortalDb? = if (sealer != null) PortalDb.open(context, cacheName) else null,
+    private val scheduleOutbox: () -> Unit = { OutboxWorker.schedule(context) },
+) {
+    private val cacheDao: CacheDao = db?.cache() ?: MemoryCacheDao()
+    private val outboxDao: OutboxDao = db?.outbox() ?: MemoryOutboxDao()
     private val cache = SecureStore(context, cacheName)
     private val prefs = context.getSharedPreferences("portal_prefs", Context.MODE_PRIVATE) // non-sensitive: workspace, last user id
 
@@ -138,7 +186,7 @@ class Repo(context: Context, val api: PortalApi = PortalApi(context), cacheName:
         }
     }
 
-    companion object { const val CACHE_SCHEMA = 2 }
+    companion object { const val CACHE_SCHEMA = 3 } // 3: responses moved from SecureStore to Room
 
     fun invalidate(fns: Collection<Fn>) {
         if (fns.isEmpty()) return
@@ -146,6 +194,15 @@ class Repo(context: Context, val api: PortalApi = PortalApi(context), cacheName:
     }
 
     fun cached(key: String): JsonElement? = cache.get(key)?.let { runCatching { Json.parseToJsonElement(it) }.getOrNull() }
+
+    private fun seal(s: String) = sealer?.seal(s) ?: s // no sealer => in-memory database, never on disk
+    private fun unseal(s: String): String? = runCatching { sealer?.open(s) ?: s }.getOrNull()
+    private fun parse(sealed: String): JsonElement? = unseal(sealed)?.let { runCatching { Json.parseToJsonElement(it) }.getOrNull() }
+
+    /** The cached response for [key] as it changes (Room is the source of truth; [load] writes to it). */
+    fun observe(key: String): Flow<JsonElement?> = cacheDao.observe(key).map { e -> e?.let { parse(it.value) } }.distinctUntilChanged()
+
+    suspend fun cachedResponse(key: String): JsonElement? = cacheDao.get(key)?.let { parse(it.value) }
 
     /** Directory index (user id → person) used to put names on rows that only carry ids. */
     @Volatile private var people: Map<Long, JsonObject> = emptyMap()
@@ -173,7 +230,7 @@ class Repo(context: Context, val api: PortalApi = PortalApi(context), cacheName:
         val r = Shapes(people, cachedMe()).normalize(fn, api.call(fn, data))
         if (fn == Fn.Directory) indexPeople(r)
         // Cache only reasonably sized responses; never cache null results over good data.
-        if (r !is JsonNull) { val s = r.toString(); if (s.length < 512_000) cache.put(key, s) }
+        if (r !is JsonNull) { val s = r.toString(); if (s.length < 512_000) cacheDao.put(CacheEntry(key, seal(s), System.currentTimeMillis())) }
         return r
     }
 
@@ -183,6 +240,77 @@ class Repo(context: Context, val api: PortalApi = PortalApi(context), cacheName:
         invalidate(Invalidation.after(fn))
         return r
     }
+
+    /**
+     * A write that may be queued (see [Outbox.QUEUEABLE]). Sent at once when possible; if the request definitely
+     * never left the device (no network, DNS, connect or TLS failure) it is saved to the outbox and sent by
+     * WorkManager later with the same Idempotency-Key. A timeout after sending is *not* queued: it may have
+     * reached the server, so the caller shows the usual "couldn't confirm" flow instead of risking a duplicate.
+     */
+    suspend fun submit(fn: Fn, body: JsonElement): Submit {
+        require(fn in Outbox.QUEUEABLE) { "${fn.name} can't be queued" }
+        val key = UUID.randomUUID().toString()
+        try {
+            api.call(fn, body, key)
+            invalidate(Invalidation.after(fn))
+            return Submit.Sent
+        } catch (e: PortalException) {
+            if (!e.offline || e.uncertain) throw e
+            outboxDao.insert(OutboxItem(fn = fn.name, payload = seal(body.toString()), idempotencyKey = key, createdAt = System.currentTimeMillis()))
+            scheduleOutbox()
+            return Submit.Queued
+        }
+    }
+
+    /** Queued writes (pending, failed and unconfirmed), oldest first, for the sync banner. */
+    val outbox: Flow<List<OutboxItem>> get() = outboxDao.observeAll()
+
+    private val drainLock = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * Sends pending outbox items in order. Returns true when WorkManager should retry later (offline, server busy,
+     * session being renewed). Server refusals become [OutboxItem.STATE_FAILED]; a timeout after sending becomes
+     * [OutboxItem.STATE_UNCONFIRMED] and is never resent automatically.
+     */
+    suspend fun drainOutbox(): Boolean = drainLock.withLock {
+        if (!api.hasSession()) return@withLock false
+        for (item in outboxDao.pending()) {
+            val fn = Fn.entries.firstOrNull { it.name == item.fn }?.takeIf { it in Outbox.QUEUEABLE }
+            val body = parse(item.payload)
+            if (fn == null || body == null) {
+                outboxDao.update(item.copy(state = OutboxItem.STATE_FAILED, lastError = "This change couldn't be read back. Please make it again."))
+                continue
+            }
+            try {
+                api.call(fn, body, item.idempotencyKey)
+                outboxDao.delete(item.id)
+                invalidate(Invalidation.after(fn))
+            } catch (e: CancellationException) { throw e
+            } catch (e: PortalException) {
+                val n = item.attempts + 1
+                when {
+                    e.code == 401 -> return@withLock true
+                    e.uncertain -> outboxDao.update(item.copy(attempts = n, state = OutboxItem.STATE_UNCONFIRMED,
+                        lastError = "Sent, but Portal One didn't confirm it. Check before sending it again."))
+                    e.offline -> return@withLock true
+                    (e.retryable || e.code in 500..599) && n < Outbox.MAX_ATTEMPTS -> {
+                        outboxDao.update(item.copy(attempts = n, lastError = e.message)); return@withLock true
+                    }
+                    else -> outboxDao.update(item.copy(attempts = n, state = OutboxItem.STATE_FAILED, lastError = e.message))
+                }
+            }
+        }
+        false
+    }
+
+    /** Puts a failed/unconfirmed item back in the queue (same Idempotency-Key) and wakes the sender. */
+    suspend fun resend(id: Long) {
+        val i = outboxDao.get(id) ?: return
+        outboxDao.update(i.copy(state = OutboxItem.STATE_PENDING, attempts = 0, lastError = null))
+        scheduleOutbox()
+    }
+
+    suspend fun discard(id: Long) = outboxDao.delete(id)
 
     suspend fun login(workspace: String, userId: String, password: String): SessionUser {
         api.clearSession()
@@ -253,7 +381,11 @@ class Repo(context: Context, val api: PortalApi = PortalApi(context), cacheName:
     fun lastWorkspace() = prefs.getString("workspace", "") ?: ""
     fun lastUserId() = prefs.getString("lastUserId", "") ?: ""
 
-    private fun clearCache() { cache.clear(); people = emptyMap(); _versions.value = emptyMap() }
+    /** Wipes cached responses and the outbox (queued writes belong to the session that made them). */
+    private suspend fun clearCache() {
+        cache.clear(); people = emptyMap(); _versions.value = emptyMap()
+        cacheDao.clear(); outboxDao.clear()
+    }
 
     /**
      * Best-effort server logout: unregister this device's push token, then delete the session row (both send
@@ -266,6 +398,6 @@ class Repo(context: Context, val api: PortalApi = PortalApi(context), cacheName:
                 if (api.hasSession()) api.call(Fn.Logout)
             }
         } catch (e: CancellationException) { throw e } catch (_: Exception) { }
-        finally { api.clearSession(); clearCache() }
+        finally { api.clearSession(); kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { clearCache() } }
     }
 }
