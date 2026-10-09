@@ -1,0 +1,6 @@
+<resources>
+    <!-- Exact tokens from the web portal stylesheet app-CR0H9OFW.css -->
+    <color name="brand_ink">#17120E</color>      <!-- color-slate-950 (launcher icon background only) -->
+    <color name="brand_gold">#B8832B</color>     <!-- portal-primary -->
+    <color name="parchment">#FBFAF7</color>      <!-- color-slate-50: page background -->
+</resources>
