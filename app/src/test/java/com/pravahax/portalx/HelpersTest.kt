@@ -118,7 +118,7 @@ class DatesAndValidationTest {
             {"attendance_date":"2026-10-06","check_in":"2026-10-06T03:30:00Z","check_out":"2026-10-06T12:30:00Z","total_break_seconds":1800},
             {"attendance_date":"2026-10-07","check_in":"2026-10-07T03:30:00Z","check_out":null},
             {"attendance_date":"2026-10-02","check_in":"2026-10-02T03:30:00Z","check_out":"2026-10-02T12:30:00Z"}
-        ]""").jsonArray.map { it.jsonObject }
+        ]""").jsonArray.map { com.pravahax.portalx.data.model.AttendanceRecord.from(it.jsonObject) }
         // Thu 8 Oct 2026 → week starts Mon 5 Oct: only the 6th counts (9h − 30m).
         assertEquals(8 * 3600L + 1800L, com.pravahax.portalx.ui.weekWorkedSeconds(rows, LocalDate.of(2026, 10, 8)))
     }

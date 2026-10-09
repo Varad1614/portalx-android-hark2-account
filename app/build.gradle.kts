@@ -10,8 +10,6 @@ plugins {
 }
 val ksProps = Properties().also { p -> rootProject.file("keystore.properties").inputStream().use { p.load(it) } }
 
-ksp { arg("room.schemaLocation", "$projectDir/schemas") }
-
 android {
     namespace = "com.pravahax.portalx"
     compileSdk = 35
@@ -20,8 +18,8 @@ android {
         applicationId = "com.pravahax.portalx.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.7.0"
+        versionCode = 12
+        versionName = "0.7.1"
     }
     signingConfigs {
         create("release") {
@@ -49,6 +47,12 @@ android {
     testOptions { unitTests.isIncludeAndroidResources = true }
 }
 dependencies {
+    // v0.7.1: the app module is only the shell (activity, navigation, DI); everything else lives in :core / :feature.
+    implementation(project(":core:ui"))
+    implementation(project(":feature:auth"))
+    implementation(project(":feature:today"))
+    implementation(project(":feature:work"))
+    implementation(project(":feature:workspace"))
     val bom = platform("androidx.compose:compose-bom:2024.09.03")
     implementation(bom)
     implementation("androidx.core:core-ktx:1.13.1")
@@ -64,11 +68,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-    // v0.7: Room (single source of truth for cached reads + the offline outbox), WorkManager (outbox sender), Hilt (DI)
-    implementation("androidx.room:room-runtime:2.7.1")
-    implementation("androidx.room:room-ktx:2.7.1")
-    ksp("androidx.room:room-compiler:2.7.1")
-    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    // Hilt (DI) stays in the app module; Room and WorkManager come from :core:data.
     implementation("com.google.dagger:hilt-android:2.52")
     ksp("com.google.dagger:hilt-compiler:2.52")
     // Robolectric has no native SQLite on aarch64 hosts: Room tests run on the bundled JVM driver instead.

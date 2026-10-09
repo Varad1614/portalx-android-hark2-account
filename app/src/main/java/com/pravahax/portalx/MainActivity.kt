@@ -156,7 +156,7 @@ private fun SecureWindow() {
 private fun BrandSplash() {
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).goldGlow(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Image(painterResource(R.drawable.logo_mark_gold), "PortalX", Modifier.width(132.dp))
+            Image(painterResource(com.pravahax.portalx.core.ui.R.drawable.logo_mark_gold), "PortalX", Modifier.width(132.dp))
             Spacer(Modifier.height(Space.xxl))
             LinearProgressIndicator(Modifier.width(96.dp), color = Web.Primary, trackColor = Web.Slate200)
         }
@@ -170,7 +170,7 @@ private fun UnavailableScreen(message: String, onRetry: () -> Unit, onSignOut: (
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(Space.xxxl))
-        Image(painterResource(R.drawable.logo_mark_gold), "PortalX", Modifier.width(96.dp))
+        Image(painterResource(com.pravahax.portalx.core.ui.R.drawable.logo_mark_gold), "PortalX", Modifier.width(96.dp))
         Spacer(Modifier.height(Space.xxl))
         CircleIcon(Icons.Outlined.CloudOff, MaterialTheme.colorScheme.primary, 56.dp)
         Spacer(Modifier.height(Space.lg))
@@ -211,7 +211,7 @@ private fun MainShell(user: SessionUser, online: Boolean, refreshMe: suspend () 
     val shellScope = rememberCoroutineScope()
     var createTask by remember { mutableStateOf(false) }
     var applyLeave by remember { mutableStateOf(false) }
-    var person by remember { mutableStateOf<JsonObject?>(null) }
+    var person by remember { mutableStateOf<com.pravahax.portalx.data.model.Person?>(null) }
     var confirmLogout by rememberSaveable { mutableStateOf(false) }
     val haptics = rememberHaptics()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
@@ -230,7 +230,7 @@ private fun MainShell(user: SessionUser, online: Boolean, refreshMe: suspend () 
                 Column {
                     TopAppBar(
                         title = {
-                            if (route == "home") Image(painterResource(R.drawable.logo_mark_gold), "PortalX", Modifier.height(24.dp))
+                            if (route == "home") Image(painterResource(com.pravahax.portalx.core.ui.R.drawable.logo_mark_gold), "PortalX", Modifier.height(24.dp))
                             else Text(titles[route] ?: "", style = MaterialTheme.typography.headlineMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.semantics { heading() })
                         },
@@ -374,7 +374,7 @@ private fun ChangePasswordScreen(onDone: (SessionUser) -> Unit, onSignOut: () ->
     ) {
         if (!embedded) {
             Spacer(Modifier.height(Space.lg))
-            Image(painterResource(R.drawable.logo_mark_gold), null, Modifier.height(28.dp))
+            Image(painterResource(com.pravahax.portalx.core.ui.R.drawable.logo_mark_gold), null, Modifier.height(28.dp))
             Spacer(Modifier.height(Space.sm))
         }
         Kicker("Account security")
