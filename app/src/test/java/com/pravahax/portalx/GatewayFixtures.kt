@@ -78,6 +78,9 @@ object GatewayFixtures {
             Fn.AccessRoles -> """{"permissions":[{"code":"people.read"}],"members":[{"userId":2,"roleNames":["Organization Owner"]}],"roles":[{"id":1,"name":"Organization Owner","description":"Full access","system":true,"permissionCodes":["people.read","people.manage"],"assignedUserIds":[2]},{"id":2,"name":"Employee","description":null,"system":false,"permissionCodes":["tasks.read"],"assignedUserIds":[7,9]}]}"""
             Fn.AuditLogs -> """[{"id":1,"action":"attendance.checkin.mobile","actor":"varad","actorUid":"PSE-00002","entityType":"attendance","entityId":"41","details":null,"ip":"mobile-api","createdAt":"${ts(today, "11:15")}"}]"""
             Fn.Settings -> """{"id":1,"name":"PravahaX","legalName":"PravahaX Pvt Ltd","workspaceSlug":"pravahax","timezone":"Asia/Kolkata","primaryColor":"#4f46e5","secondaryColor":"#06b6d4","logoUrl":""}"""
+            Fn.AuthRefresh -> """{"token":"${"b".repeat(64)}","compositeToken":"pravahax.${"b".repeat(64)}","expiresInSeconds":604800,"workspace":"pravahax",
+                "user":{"id":2,"userId":"PSE-00002","fullName":"varad","workEmail":"varad@pravahax.com","role":"super_admin","mustChangePassword":false,"teamId":null,"isTeamLead":false,"status":"active"}}"""
+            Fn.DeviceToken, Fn.DeviceTokenRemove -> """{"ok":true}"""
             Fn.Logout, Fn.ChangePassword, Fn.RequestPasswordReset -> """{"message":"ok"}"""
             Fn.CheckIn, Fn.CheckOut, Fn.StartBreak, Fn.EndBreak, Fn.RequestCorrection -> """{"id":41}"""
             Fn.DecideCorrection, Fn.DecideLeave -> """{"ok":true}"""
