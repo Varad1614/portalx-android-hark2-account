@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Selfies are written to a private cache sub-folder and deleted right after upload. -->
+    <cache-path name="selfies" path="selfies/" />
+</paths>
