@@ -1,0 +1,22 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Light only (v0.3.0): the web portal has no dark theme, so neither does the app.
+         Material.Light parent (not DayNight), force-dark disabled, dark system-bar icons on parchment. -->
+    <style name="Theme.PortalX" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/parchment</item>
+        <item name="android:colorBackground">@color/parchment</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
+        <item name="android:enforceNavigationBarContrast" tools:targetApi="29">false</item>
+    </style>
+    <style name="Theme.PortalX.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/parchment</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_mark</item>
+        <item name="postSplashScreenTheme">@style/Theme.PortalX</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
+    </style>
+</resources>
