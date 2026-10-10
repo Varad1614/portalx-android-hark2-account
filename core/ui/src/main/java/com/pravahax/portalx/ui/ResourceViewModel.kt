@@ -21,6 +21,8 @@ data class ResourceState(
     val stale: Boolean = false,
     /** A 401 arrived; the UI signs out and then calls [ResourceViewModel.expiryHandled]. */
     val sessionExpired: Boolean = false,
+    /** v0.10.4: when the data on screen was fetched (epoch ms), null if unknown. */
+    val updatedAt: Long? = null,
 )
 
 /**
@@ -48,6 +50,7 @@ class ResourceViewModel(
 
     init {
         viewModelScope.launch { repo.observe(key).collect { v -> if (v != null) _state.update { it.copy(data = v) } } }
+        viewModelScope.launch { repo.observeUpdatedAt(key).collect { t -> if (t != null) _state.update { it.copy(updatedAt = t) } } }
         viewModelScope.launch {
             repo.versions.map { it[fn] ?: 0 }.distinctUntilChanged().drop(1).collect { if (started) fetch(user = false) }
         }
@@ -79,7 +82,7 @@ class ResourceViewModel(
                 try {
                     val r = repo.load(fn, request, key)
                     loadedAt = clock()
-                    _state.update { it.copy(data = r, error = null, stale = false) }
+                    _state.update { it.copy(data = r, error = null, stale = false, updatedAt = loadedAt) }
                 } catch (e: CancellationException) { throw e
                 } catch (e: PortalException) {
                     if (e.code == 401) _state.update { it.copy(sessionExpired = true) }

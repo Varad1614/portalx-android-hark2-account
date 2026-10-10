@@ -53,6 +53,7 @@ fun HomeScreen(user: SessionUser, navigate: (String) -> Unit) {
     val ym = java.time.YearMonth.from(Dates.today())
     val cal = rememberResource(Endpoint.CalendarMonth, buildJsonObject { put("year", ym.year); put("month", ym.monthValue) }, key = "cal-$ym", enabled = user.can("comms.read"))
     val meetings = rememberResource(Endpoint.Meetings)
+    val history = rememberResource(Endpoint.AttendanceHistory) // v0.10.4: NOW checks recent days left open
     val all = listOf(today, tasks, leave, ann, people, pendLeave, pendCorr, projects, cal, meetings)
     val refreshing = all.any { it.refreshing }
     var detail by remember { mutableStateOf<Stat?>(null) }
@@ -78,12 +79,20 @@ fun HomeScreen(user: SessionUser, navigate: (String) -> Unit) {
             val now = rememberNowZoned()
             var snoozeTick by remember { mutableIntStateOf(0) }
             val approvals = com.pravahax.portalx.data.model.ApprovalItem.inbox(pendLeave.data.orEmpty(), pendCorr.data.orEmpty()).size
-            val result = remember(now, today.data, today.loading, today.stale, today.error, tasks.data, meetings.data, leave.data, cal.data, approvals, snoozeTick) {
+            // v0.10.4: never advise from old data. Anything older than 30 min is refetched while Home is open.
+            LaunchedEffect(now) {
+                val nowMs = now.toInstant().toEpochMilli()
+                listOf(today, meetings, history).forEach { r ->
+                    if (!r.loading && r.error == null && com.pravahax.portalx.now.NowContext.isOld(r.updatedAt, nowMs)) r.refresh()
+                }
+            }
+            val freshHistory = history.data?.takeIf { !history.stale && history.error == null && !com.pravahax.portalx.now.NowContext.isOld(history.updatedAt, now.toInstant().toEpochMilli()) }
+            val result = remember(now, today.data, today.loading, today.stale, today.error, today.updatedAt, tasks.data, meetings.data, leave.data, cal.data, approvals, freshHistory, snoozeTick) {
                 val ctx = com.pravahax.portalx.now.NowContext.build(
                     now, today.data,
-                    com.pravahax.portalx.now.NowContext.freshness(today.data != null, today.loading, today.stale, today.error),
+                    com.pravahax.portalx.now.NowContext.freshness(today.data != null, today.loading, today.stale, today.error, today.updatedAt, now.toInstant().toEpochMilli()),
                     meetings.data.orEmpty(), tasks.data.orEmpty(), leave.data, cal.data, approvals,
-                    user.canApproveLeave || user.canApproveCorrections,
+                    user.canApproveLeave || user.canApproveCorrections, history = freshHistory,
                 )
                 com.pravahax.portalx.now.NowPilot.attendance(ctx)
                 com.pravahax.portalx.now.NowEngine.evaluate(ctx, snoozedUntil = com.pravahax.portalx.now.NowSnoozes.snapshot())
@@ -93,7 +102,8 @@ fun HomeScreen(user: SessionUser, navigate: (String) -> Unit) {
             LaunchedEffect(today.data, meetings.data) {
                 runCatching { appCtx.sendBroadcast(android.content.Intent("com.pravahax.portalx.NOW_ALARM").setClassName(appCtx.packageName, "com.pravahax.portalx.now.NowAlarmReceiver")) }
             }
-            NowCard(result, today.initialLoading, navigate, refresh = { today.refresh() }, onSnooze = { shown ->
+            NowCard(result, today.initialLoading, navigate, refresh = { today.refresh(); meetings.refresh(); history.refresh() },
+                asOf = listOfNotNull(today.updatedAt, meetings.updatedAt.takeIf { meetings.data != null }).minOrNull(), onSnooze = { shown ->
                 com.pravahax.portalx.now.NowSnoozes.snooze(shown); com.pravahax.portalx.now.NowPilot.snoozed(shown); snoozeTick++
             })
         }

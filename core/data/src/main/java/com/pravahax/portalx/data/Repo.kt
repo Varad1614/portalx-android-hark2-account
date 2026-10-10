@@ -207,6 +207,10 @@ class Repo(
 
     suspend fun cachedResponse(key: String): JsonElement? = cacheDao.get(key)?.let { parse(it.value) }
 
+    /** v0.10.4: when [key] was last saved from the network (epoch ms), for data-age labels. */
+    fun observeUpdatedAt(key: String): Flow<Long?> = cacheDao.observe(key).map { it?.updatedAt }.distinctUntilChanged()
+    suspend fun cachedAt(key: String): Long? = cacheDao.get(key)?.updatedAt
+
     /** Directory index (user id → person) used to put names on rows that only carry ids. */
     @Volatile private var people: Map<Long, JsonObject> = emptyMap()
     private val peopleLock = kotlinx.coroutines.sync.Mutex()

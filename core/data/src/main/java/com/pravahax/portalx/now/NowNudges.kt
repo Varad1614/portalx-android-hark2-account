@@ -32,6 +32,12 @@ object NowNudges {
             Rules.checkOut.evaluate(ctx)?.takeIf { it.ruleId == "attendance.check-out-forgotten" }?.let { c ->
                 out += Nudge("$day|checkout", "Still checked in?", "${c.detail}. Check out in PortalX.", "attendance", c.key)
             }
+            // v0.10.4: one reminder per open day, from an hour before shift start on a work day.
+            val open = ctx.openDay
+            if (open != null && ctx.isWorkDay && !ctx.now.isBefore(ctx.at(ctx.shift.start).minus(NowConfig.checkInLead)))
+                Rules.previousDayOpen.evaluate(ctx)?.let { c ->
+                    out += Nudge("$day|openday:$open", c.title, "${c.detail}.", Rules.correctionRoute(open, "forgot_check_out"), c.key)
+                }
             val a = ctx.attendance
             val since = a?.breakStartedAt
             if (a != null && a.onBreak && a.checkOut == null && since != null) {

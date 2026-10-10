@@ -230,7 +230,7 @@ private val titles = mapOf(
 private fun MainShell(user: SessionUser, online: Boolean, refreshMe: suspend () -> Unit, startRoute: String, onLogout: () -> Unit) {
     val nav = rememberNavController()
     val entry by nav.currentBackStackEntryAsState()
-    val route = entry?.destination?.route ?: startRoute
+    val route = entry?.destination?.route?.substringBefore('?') ?: startRoute
     val isTab = tabs.any { it.route == route }
     val snackbar = remember { SnackbarHostState() }
     val shellScope = rememberCoroutineScope()
@@ -340,7 +340,11 @@ private fun MainShell(user: SessionUser, online: Boolean, refreshMe: suspend () 
                 popEnterTransition = { if (reduce) EnterTransition.None else fadeIn(tween(220)) },
                 popExitTransition = { if (reduce) ExitTransition.None else fadeOut(tween(160)) + slideOutHorizontally(tween(220)) { it / 14 } }) {
                 composable("home") { HomeScreen(user, ::go) }
-                composable("attendance") { AttendanceScreen(user) { go("insights") } }
+                // v0.10.4: "attendance?correct=2026-10-09&reason=forgot_check_out" opens the correction form filled in.
+                composable("attendance?correct={correct}&reason={reason}", arguments = listOf(
+                    androidx.navigation.navArgument("correct") { type = androidx.navigation.NavType.StringType; nullable = true; defaultValue = null },
+                    androidx.navigation.navArgument("reason") { type = androidx.navigation.NavType.StringType; nullable = true; defaultValue = null },
+                )) { e -> AttendanceScreen(user, e.arguments?.getString("correct"), e.arguments?.getString("reason")) { go("insights") } }
                 composable("tasks") { TasksScreen(user, createTask) { createTask = false } }
                 composable("calendar") { CalendarScreen() }
                 composable("more") { MoreScreen(user, ::go, askLogout, refreshMe) }

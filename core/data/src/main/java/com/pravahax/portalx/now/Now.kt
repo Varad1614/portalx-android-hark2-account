@@ -37,6 +37,12 @@ object NowConfig {
     val meetingUrgentLead: Duration = Duration.ofMinutes(3)
     /** v0.10.3: a second check-in reminder this long after shift start. */
     val checkInRepeat: Duration = Duration.ofMinutes(15)
+    /** v0.10.4: attendance or meetings older than this are not advised on as if live; Home refetches them. */
+    val maxDataAge: Duration = Duration.ofMinutes(30)
+    /** v0.10.4: how far back an unclosed day still gets a correction prompt. */
+    const val OPEN_DAY_LOOKBACK = 3L
+    /** v0.10.4: a submitted correction hides its prompt this long (the gateway has no "my corrections" list to check). */
+    val correctionHold: Duration = Duration.ofDays(7)
     /** v0.10.3: break reminders at these marks. */
     val breakAlerts: List<Duration> = listOf(Duration.ofMinutes(45), Duration.ofMinutes(60))
     /** "Not now" hides a candidate for this long. */
@@ -71,6 +77,8 @@ data class WorkdayContext(
     val tasks: List<NowTask> = emptyList(),
     val pendingApprovals: Int = 0,
     val canApprove: Boolean = false,
+    /** v0.10.4: the latest recent work day that was checked in but never checked out (from live history), or null. */
+    val openDay: LocalDate? = null,
 ) {
     val today: LocalDate get() = now.toLocalDate()
     val isWorkDay get() = now.dayOfWeek in shift.workDays && holidayToday == null && !onApprovedLeaveToday && attendance?.onLeave != true
@@ -152,6 +160,20 @@ object Rules {
             "No check-in yet today, and your shift starts within the hour.", "Check in", NowAction.Open("attendance"), requiresLiveAttendance = true)
     }
 
+    /** v0.10.4: deep link that opens Attendance with the correction form filled in. */
+    fun correctionRoute(day: LocalDate, reason: String) = "attendance?correct=$day&reason=$reason"
+    private val dayFmt = java.time.format.DateTimeFormatter.ofPattern("EEE, d MMM", java.util.Locale.ENGLISH)
+
+    /** v0.10.4: an earlier day was left checked in (forgot to check out, or punched out on a broken device). */
+    val previousDayOpen = Rule { c ->
+        val d = c.openDay ?: return@Rule null
+        if (!d.isBefore(c.today)) return@Rule null
+        Candidate("attendance.previous-day-open", d.toString(), Band.Due, 57, "Check-out missing for ${d.format(dayFmt)}",
+            "Request a correction so the day counts in full",
+            "You checked in on ${d.format(dayFmt)} but there's no check-out, so that day's hours are incomplete.",
+            "Request correction", NowAction.Open(correctionRoute(d, "forgot_check_out")))
+    }
+
     /** v0.10.3: the shift ended with no check-in. Never go silent: offer a correction for the day. */
     val checkInMissed = Rule { c ->
         if (!c.isWorkDay) return@Rule null
@@ -160,7 +182,7 @@ object Rules {
         val d = c.today.format(java.time.format.DateTimeFormatter.ofPattern("d MMM", java.util.Locale.ENGLISH))
         Candidate("attendance.check-in-missed", "today", Band.Due, 58, "No check-in today",
             "Request a correction for $d", "Your shift ended and there's no check-in for today, so the day would count as absent.",
-            "Request correction", NowAction.Open("attendance"), requiresLiveAttendance = true)
+            "Request correction", NowAction.Open(correctionRoute(c.today, "forgot_check_in")), requiresLiveAttendance = true)
     }
 
     val checkOut = Rule { c ->
@@ -246,7 +268,7 @@ object Rules {
     }
 
     /** Ordered as documented; evaluation order never affects the result (the resolver sorts). */
-    val catalogue: List<Rule> = listOf(breakRunning, checkInRequired, checkInMissed, checkOut, meetingLive, meetingSoon,
+    val catalogue: List<Rule> = listOf(breakRunning, checkInRequired, checkInMissed, previousDayOpen, checkOut, meetingLive, meetingSoon,
         taskOverdue, taskDueToday, approvalPending, dayOff, dayComplete)
 }
 
@@ -323,10 +345,19 @@ object NowSnoozes {
         runCatching { if (f.exists()) f.readLines().forEach { l -> l.split('\t').takeIf { it.size == 2 }?.let { (k, v) -> v.toLongOrNull()?.takeIf { it > nowMs }?.let { until[k] = it } } } }
     }
     fun snooze(c: Candidate, nowMs: Long = System.currentTimeMillis()) = snooze(c.key, nowMs)
-    @Synchronized fun snooze(key: String, nowMs: Long = System.currentTimeMillis()) {
-        until[key] = nowMs + NowConfig.snooze.toMillis()
+    @Synchronized fun snooze(key: String, nowMs: Long = System.currentTimeMillis(), forMs: Long = NowConfig.snooze.toMillis()) {
+        until[key] = maxOf(until[key] ?: 0L, nowMs + forMs)
         until.entries.removeIf { it.value <= nowMs }
         runCatching { file?.writeText(until.entries.joinToString("") { "${it.key}\t${it.value}\n" }) }
+    }
+    /**
+     * v0.10.4: a correction was submitted for [date]: stop prompting for that day (open day for a week; a missed
+     * check-in for the rest of today).
+     */
+    fun correctionRequested(date: LocalDate, today: LocalDate, zone: java.time.ZoneId, nowMs: Long = System.currentTimeMillis()) {
+        snooze("attendance.previous-day-open:$date", nowMs, NowConfig.correctionHold.toMillis())
+        if (date == today) snooze("attendance.check-in-missed:today", nowMs,
+            today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - nowMs)
     }
     fun isSnoozed(key: String, nowMs: Long = System.currentTimeMillis()) = (until[key] ?: 0L) > nowMs
     fun snapshot(): Map<String, Long> = HashMap(until)

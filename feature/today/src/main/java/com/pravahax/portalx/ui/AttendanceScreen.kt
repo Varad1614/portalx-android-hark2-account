@@ -298,14 +298,16 @@ fun weekWorkedSeconds(rows: List<AttendanceRecord>, today: LocalDate = Dates.tod
 }
 
 @Composable
-fun AttendanceScreen(user: SessionUser, onInsights: () -> Unit = {}) {
+fun AttendanceScreen(user: SessionUser, correctDate: String? = null, correctReason: String? = null, onInsights: () -> Unit = {}) {
     val repo = LocalRepo.current
     val online = LocalOnline.current
     val today = rememberResource(Endpoint.AttendanceToday)
     val history = rememberResource(Endpoint.AttendanceHistory)
     val corrections = rememberResource(Endpoint.Corrections, enabled = user.canApproveCorrections)
     val act = rememberAction()
-    var showCorrection by rememberSaveable { mutableStateOf(false) }
+    // v0.10.4: NOW's "Request correction" arrives with the day and reason already chosen.
+    val prefillDate = correctDate?.takeIf { d -> runCatching { java.time.LocalDate.parse(d) }.getOrNull()?.let { !it.isAfter(Dates.today()) } == true }
+    var showCorrection by rememberSaveable { mutableStateOf(prefillDate != null) }
     var rejectTarget by remember { mutableStateOf<Correction?>(null) }
     val refreshAll = { today.refresh(); history.refresh(); corrections.refresh() }
     val ctl = rememberAttendanceController(onAlreadyDone = refreshAll)
@@ -449,8 +451,12 @@ fun AttendanceScreen(user: SessionUser, onInsights: () -> Unit = {}) {
             onConfirm = { if (id != null) act("corr-${id.content}", "Correction rejected.") { repo.act(Fn.DecideCorrection, buildJsonObject { put("id", id); put("decision", "rejected") }) } },
             onDismiss = { rejectTarget = null })
     }
-    if (showCorrection) CorrectionSheet(busy = act.isRunning("correction"), onDismiss = { showCorrection = false }) { date, reason, note ->
-        act("correction", "Correction submitted. Your manager has been notified.", onDone = { showCorrection = false }) {
+    if (showCorrection) CorrectionSheet(busy = act.isRunning("correction"), onDismiss = { showCorrection = false },
+        initialDate = prefillDate, initialReason = correctReason) { date, reason, note ->
+        act("correction", "Correction submitted. Your manager has been notified.", onDone = {
+            showCorrection = false
+            runCatching { com.pravahax.portalx.now.NowSnoozes.correctionRequested(java.time.LocalDate.parse(date), Dates.today(), com.pravahax.portalx.data.AppZone) }
+        }) {
             repo.act(Fn.RequestCorrection, buildJsonObject { put("date", date); put("reason", correctionReason(reason, note)) })
         }
     }
@@ -503,13 +509,14 @@ private fun BigRoundButton(label: String, icon: androidx.compose.ui.graphics.vec
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CorrectionSheet(busy: Boolean, onDismiss: () -> Unit, onSubmit: (String, String, String) -> Unit) {
-    var date by rememberSaveable { mutableStateOf(Dates.today().toString()) }
-    var reason by rememberSaveable { mutableStateOf("forgot_check_in") }
+private fun CorrectionSheet(busy: Boolean, onDismiss: () -> Unit, initialDate: String? = null, initialReason: String? = null,
+                            onSubmit: (String, String, String) -> Unit) {
+    var date by rememberSaveable { mutableStateOf(initialDate ?: Dates.today().toString()) }
+    val reasons = listOf("forgot_check_in" to "Forgot check in", "forgot_check_out" to "Forgot check out", "late_arrival" to "Late arrival", "early_departure" to "Early departure", "other" to "Other")
+    var reason by rememberSaveable { mutableStateOf(initialReason?.takeIf { r -> reasons.any { it.first == r } } ?: "forgot_check_in") }
     var note by rememberSaveable { mutableStateOf("") }
     var pickDate by remember { mutableStateOf(false) }
     var err by remember { mutableStateOf<String?>(null) }
-    val reasons = listOf("forgot_check_in" to "Forgot check in", "forgot_check_out" to "Forgot check out", "late_arrival" to "Late arrival", "early_departure" to "Early departure", "other" to "Other")
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
         Column(Modifier.padding(horizontal = Space.xl).padding(bottom = Space.xxl).navigationBarsPadding().imePadding(), verticalArrangement = Arrangement.spacedBy(Space.md)) {
             Kicker("Attendance")

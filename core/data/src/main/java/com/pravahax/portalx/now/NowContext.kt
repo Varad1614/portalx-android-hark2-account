@@ -1,6 +1,7 @@
 package com.pravahax.portalx.now
 
 import com.pravahax.portalx.data.Dates
+import com.pravahax.portalx.data.model.AttendanceRecord
 import com.pravahax.portalx.data.model.AttendanceToday
 import com.pravahax.portalx.data.model.CalendarMonth
 import com.pravahax.portalx.data.model.LeaveSummary
@@ -24,6 +25,8 @@ object NowContext {
         pendingApprovals: Int = 0,
         canApprove: Boolean = false,
         shift: ShiftWindow = NowConfig.shift,
+        /** Attendance history; pass it only when it is fresh (a day corrected on the web must not be prompted). */
+        history: List<AttendanceRecord>? = null,
     ): WorkdayContext {
         val day = now.toLocalDate()
         val att = today?.let {
@@ -43,14 +46,27 @@ object NowContext {
             NowTask(t.key ?: "t$i", t.title?.takeIf { it.isNotBlank() } ?: "Task", Dates.day(t.dueDate), t.priority, t.done || t.status.equals("completed", true))
         }
         return WorkdayContext(now, shift, att, if (today == null && todayFreshness == Freshness.Live) Freshness.Unknown else todayFreshness,
-            holiday, onLeave, ms, ts, pendingApprovals, canApprove)
+            holiday, onLeave, ms, ts, pendingApprovals, canApprove, openDay(history, day))
     }
 
+    /** v0.10.4: the latest of the last few days with a check-in and no check-out (and no correction already on it). */
+    fun openDay(history: List<AttendanceRecord>?, today: java.time.LocalDate): java.time.LocalDate? = history.orEmpty().mapNotNull { r ->
+        val d = r.date?.let(Dates::day) ?: Dates.instant(r.checkIn)?.toLocalDate() ?: return@mapNotNull null
+        val open = !r.checkIn.isNullOrBlank() && r.checkOut.isNullOrBlank() && r.status?.contains("correct", true) != true
+        d.takeIf { open && it.isBefore(today) && !it.isBefore(today.minusDays(NowConfig.OPEN_DAY_LOOKBACK)) }
+    }.maxOrNull()
+
     /** Freshness of one cached resource as the UI sees it. */
-    fun freshness(hasData: Boolean, loading: Boolean, stale: Boolean, error: String?): Freshness = when {
+    fun freshness(hasData: Boolean, loading: Boolean, stale: Boolean, error: String?, updatedAt: Long? = null,
+                  nowMs: Long = System.currentTimeMillis()): Freshness = when {
         !hasData -> if (loading) Freshness.Updating else Freshness.Unknown
         stale || error != null -> Freshness.Cached
         loading -> Freshness.Updating
+        // v0.10.4: "live" data that sat on screen past the limit is not live any more.
+        isOld(updatedAt, nowMs) -> Freshness.Cached
         else -> Freshness.Live
     }
+
+    fun isOld(updatedAt: Long?, nowMs: Long = System.currentTimeMillis()) =
+        updatedAt != null && nowMs - updatedAt > NowConfig.maxDataAge.toMillis()
 }

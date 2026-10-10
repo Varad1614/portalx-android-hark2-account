@@ -87,6 +87,8 @@ class NowNudgeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
                 repo.cachedResponse(Endpoint.MyLeave.fn.name)?.let { LeaveSummary.from(it) },
                 repo.cachedResponse("cal-$ym")?.let { CalendarMonth.from(it) },
                 approvals, me.canApproveLeave || me.canApproveCorrections,
+                // v0.10.4: open earlier days, only from a live read (a day fixed on the web must not be prompted)
+                history = runCatching { com.pravahax.portalx.data.model.AttendanceRecord.list(repo.load(Fn.AttendanceHistory)) }.getOrNull(),
             )
         }
     }

@@ -1,6 +1,7 @@
 package com.pravahax.portalx.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -37,7 +38,7 @@ private fun iconFor(c: Candidate): ImageVector = when {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NowCard(result: NowResult?, loading: Boolean, navigate: (String) -> Unit, refresh: () -> Unit, onSnooze: (Candidate) -> Unit) {
+fun NowCard(result: NowResult?, loading: Boolean, navigate: (String) -> Unit, refresh: () -> Unit, asOf: Long? = null, onSnooze: (Candidate) -> Unit) {
     val policy = remember { StabilityPolicy() }
     var why by remember { mutableStateOf(false) }
     val p = PortalTheme.status
@@ -45,8 +46,19 @@ fun NowCard(result: NowResult?, loading: Boolean, navigate: (String) -> Unit, re
         Row(verticalAlignment = Alignment.CenterVertically) {
             Kicker("Now")
             Spacer(Modifier.weight(1f))
-            if (result != null && result.freshness != Freshness.Live)
-                StatusChip(when (result.freshness) { Freshness.Updating -> "Updating"; Freshness.Cached -> "Offline data"; else -> "Not loaded" }, p.warning)
+            // v0.10.4: say how old the data is (tap to refresh) instead of a bare "Offline data".
+            val asOfLabel = asOf?.let { "As of " + java.time.Instant.ofEpochMilli(it).atZone(com.pravahax.portalx.data.AppZone).toLocalTime()
+                .format(java.time.format.DateTimeFormatter.ofPattern("h:mm a", java.util.Locale.ENGLISH)) }
+            val old = com.pravahax.portalx.now.NowContext.isOld(asOf)
+            if (result != null && (result.freshness != Freshness.Live || old))
+                Box(Modifier.clickable(onClickLabel = "Refresh") { refresh() }.testTag("now-data-age")) {
+                    StatusChip(when {
+                        result.freshness == Freshness.Updating -> "Updating"
+                        result.freshness == Freshness.Unknown -> "Not loaded"
+                        asOfLabel != null -> asOfLabel
+                        else -> "Offline data"
+                    }, p.warning)
+                }
         }
         Spacer(Modifier.height(Space.sm))
         if (result == null || (loading && result.ranked.isEmpty() && result.chosen.ruleId == "workday.clear")) {

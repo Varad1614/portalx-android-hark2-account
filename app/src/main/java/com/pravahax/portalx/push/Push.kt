@@ -35,7 +35,11 @@ object Push {
     val ROUTES = setOf("home", "approvals", "attendance", "tasks", "leave", "calendar", "notifications", "announcements", "meetings")
     internal val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    fun safeRoute(r: String?): String? = r?.trim()?.lowercase()?.takeIf { it in ROUTES }
+    private val CORRECTION_QUERY = Regex("""correct=\d{4}-\d{2}-\d{2}&reason=[a-z_]{1,24}""")
+    /** A known destination, or v0.10.4's correction link ("attendance?correct=2026-10-09&reason=forgot_check_out"). */
+    fun safeRoute(r: String?): String? = r?.trim()?.lowercase()?.takeIf {
+        it in ROUTES || (it.substringBefore('?') == "attendance" && CORRECTION_QUERY.matches(it.substringAfter('?')))
+    }
 
     fun available(ctx: Context): Boolean = runCatching { FirebaseApp.getApps(ctx).isNotEmpty() }.getOrDefault(false)
 

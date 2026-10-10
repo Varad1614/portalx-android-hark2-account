@@ -76,9 +76,12 @@ class TodayWidget : AppWidgetProvider() {
                     repo.cachedResponse(Endpoint.MyLeave.fn.name)?.let { com.pravahax.portalx.data.model.LeaveSummary.from(it) },
                     repo.cachedResponse("cal-${java.time.YearMonth.from(Dates.today())}")?.let { com.pravahax.portalx.data.model.CalendarMonth.from(it) },
                     approvals, user.canApproveLeave || user.canApproveCorrections,
+                    history = repo.cachedAt(Endpoint.AttendanceHistory.fn.name)?.takeIf { !com.pravahax.portalx.now.NowContext.isOld(it) }
+                        ?.let { com.pravahax.portalx.data.model.AttendanceRecord.list(repo.cachedResponse(Endpoint.AttendanceHistory.fn.name)) },
                 ), snoozedUntil = com.pravahax.portalx.now.NowSnoozes.snapshot()).chosen
             }.getOrNull()
-            return WidgetSummary.of(today, tasks.count { !it.done }, approvals, now = now)
+            return WidgetSummary.of(today, tasks.count { !it.done }, approvals, now = now,
+                asOf = repo.cachedAt(Endpoint.AttendanceToday.fn.name))
         }
     }
 }
@@ -89,7 +92,7 @@ data class WidgetSummary(val headline: String, val detail: String, val route: St
         val signedOut = WidgetSummary("Sign in to PortalX", "Your day at a glance", "home")
 
         fun of(today: AttendanceToday?, openTasks: Int, approvals: Int, day: java.time.LocalDate = Dates.today(),
-               now: com.pravahax.portalx.now.Candidate? = null): WidgetSummary {
+               now: com.pravahax.portalx.now.Candidate? = null, asOf: Long? = null, nowMs: Long = System.currentTimeMillis()): WidgetSummary {
             // v0.9.1: the cache has no date of its own; a punch from an earlier day means the cache is stale (after midnight).
             val stale = listOfNotNull(today?.checkIn, today?.checkOut).any { Dates.instant(it)?.toLocalDate()?.let { d -> d != day } == true }
             val headline = when {
@@ -103,6 +106,10 @@ data class WidgetSummary(val headline: String, val detail: String, val route: St
             val parts = buildList {
                 add(if (openTasks == 0) "No open tasks" else "$openTasks open task${if (openTasks == 1) "" else "s"}")
                 if (approvals > 0) add("$approvals to approve")
+                // v0.10.4: the widget only reads the cache; say when it's old so nobody trusts a stale "Checked in".
+                if (today != null && !stale && com.pravahax.portalx.now.NowContext.isOld(asOf, nowMs))
+                    add("as of " + java.time.Instant.ofEpochMilli(asOf!!).atZone(com.pravahax.portalx.data.AppZone).toLocalTime()
+                        .format(java.time.format.DateTimeFormatter.ofPattern("h:mm a", java.util.Locale.ENGLISH)))
             }
             val fallback = if (approvals > 0) "approvals" else "attendance"
             // Only an actionable NOW candidate earns the line (and the tap target); "nothing urgent" stays quiet.

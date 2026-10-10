@@ -84,6 +84,8 @@ class Resource<out T>(
     /** True when [data] came from the on-device cache and the last network attempt failed. */
     val stale: Boolean,
     val refresh: () -> Unit,
+    /** v0.10.4: when [data] was fetched from the network (epoch ms); null if unknown. */
+    val updatedAt: Long? = null,
 ) {
     /** First load with nothing to show yet: render skeletons. */
     val initialLoading get() = data == null && loading
@@ -116,7 +118,7 @@ fun <T> rememberResource(endpoint: Endpoint<T>, data: JsonElement? = null, key: 
     LaunchedEffect(s.sessionExpired) { if (s.sessionExpired) { vm.expiryHandled(); expired() } }
     // Decoded once per new payload, not on every recomposition.
     val model = remember(s.data) { s.data?.let(endpoint.decode) }
-    return Resource(model, s.loading, s.userRefresh && s.loading, s.error, s.stale) { vm.refresh() }
+    return Resource(model, s.loading, s.userRefresh && s.loading, s.error, s.stale, { vm.refresh() }, s.updatedAt)
 }
 
 // ======================= actions =======================
