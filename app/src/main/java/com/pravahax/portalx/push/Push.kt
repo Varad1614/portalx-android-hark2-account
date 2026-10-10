@@ -29,6 +29,8 @@ import kotlinx.coroutines.launch
  */
 object Push {
     const val EXTRA_ROUTE = "portalx.route"
+    /** v0.10.2: where a tap came from (`now:<nudge key>` or `widget:<NOW key>`), for the NOW pilot. */
+    const val EXTRA_SRC = "portalx.src"
     /** In-app destinations a notification may open. Anything else is ignored (intents into an exported activity are untrusted). */
     val ROUTES = setOf("home", "approvals", "attendance", "tasks", "leave", "calendar", "notifications", "announcements", "meetings")
     internal val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -61,7 +63,8 @@ object Push {
     fun show(ctx: Context, m: PushMessage) {
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val open = Intent(ctx, MainActivity::class.java).putExtra(EXTRA_ROUTE, m.route).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        val pi = PendingIntent.getActivity(ctx, m.route.hashCode(), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        if (m.tag.startsWith("now:")) open.putExtra(EXTRA_SRC, m.tag)
+        val pi = PendingIntent.getActivity(ctx, m.tag.ifBlank { m.route }.hashCode(), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = NotificationCompat.Builder(ctx, m.channel.id)
             .setSmallIcon(R.drawable.ic_stat_portalx).setColor(0xFFB8832B.toInt())
             .setContentTitle(m.title).setContentText(m.body).setStyle(NotificationCompat.BigTextStyle().bigText(m.body))
@@ -79,6 +82,12 @@ object DeepLink {
     val route = MutableStateFlow<String?>(null)
     fun offer(intent: Intent?) {
         Push.safeRoute(intent?.getStringExtra(Push.EXTRA_ROUTE) ?: intent?.getStringExtra("route"))?.let { route.value = it }
+        val src = intent?.getStringExtra(Push.EXTRA_SRC) ?: return
+        intent.removeExtra(Push.EXTRA_SRC) // count a tap once, not again on rotation/recreate
+        when {
+            src.startsWith("now:") -> com.pravahax.portalx.now.NowPilot.nudgeOpened(src.removePrefix("now:"))
+            src.startsWith("widget:") -> com.pravahax.portalx.now.NowPilot.record("tapped", src.removePrefix("widget:"), "widget")
+        }
     }
     fun consume() { route.value = null }
 }

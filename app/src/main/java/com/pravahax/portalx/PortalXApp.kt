@@ -22,6 +22,7 @@ class PortalXApp : Application(), RepoHost {
         OutboxWorker.schedule(this)
         com.pravahax.portalx.push.Push.createChannels(this)
         // v0.10.1 PortalX NOW: local nudges (forgotten check-out, meeting soon) + widget refresh, about every 15 minutes.
+        com.pravahax.portalx.now.NowPilot.init(java.io.File(filesDir, "now_pilot.tsv"))
         com.pravahax.portalx.now.NowNudgeWorker.schedule(this)
     }
 }

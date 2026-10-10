@@ -53,6 +53,8 @@ fun MoreScreen(user: SessionUser, navigate: (String) -> Unit, onLogout: () -> Un
     val snack = LocalSnackbar.current
     val scope = rememberCoroutineScope()
     val (refreshing, refresh) = rememberUserRefresh(refreshMe)
+    var pilot by remember { mutableStateOf(false) }
+    if (pilot) NowPilotDialog { pilot = false }
     RefreshList(refreshing, refresh) {
         item(key = "me") {
             SectionCard(onClick = { navigate("profile") }) {
@@ -80,6 +82,7 @@ fun MoreScreen(user: SessionUser, navigate: (String) -> Unit, onLogout: () -> Un
                 if (user.can("performance.read")) HubRow(Icons.Outlined.Insights, "Performance & feedback", "Reviews and peer feedback") { navigate("performance") }
                 if (user.can("teams.read")) HubRow(Icons.Outlined.Diversity3, "Teams", "Leads, managers and members") { navigate("teams") }
                 HubRow(Icons.Outlined.Notifications, "Notifications", "Approvals and updates") { navigate("notifications") }
+                HubRow(Icons.Outlined.Analytics, "NOW pilot stats", "How Now suggestions are working for you") { pilot = true }
             }
         }
         val admin = listOf(
@@ -465,4 +468,26 @@ fun ProfileScreen(user: SessionUser, onLogout: () -> Unit, refreshMe: suspend ()
         }
         item(key = "pad") { Spacer(Modifier.height(Space.xxl)) }
     }
+}
+
+/** v0.10.2: the NOW pilot numbers, on-device only; Share sends the summary and raw CSV wherever the user picks. */
+@Composable
+private fun NowPilotDialog(onDismiss: () -> Unit) {
+    val c = LocalContext.current
+    val events = remember { com.pravahax.portalx.now.NowPilot.snapshot() }
+    val report = remember(events) { com.pravahax.portalx.now.NowPilot.metrics(events, com.pravahax.portalx.data.Dates.today()).report(AppInfo.versionName(c)) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("NOW pilot stats") },
+        text = { Text(if (events.isEmpty()) "Nothing recorded yet. Stats build up as you use Home, the widget and reminders." else report, style = MaterialTheme.typography.bodyMedium) },
+        confirmButton = {
+            TextButton(enabled = events.isNotEmpty(), onClick = {
+                val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(android.content.Intent.EXTRA_SUBJECT, "PortalX NOW pilot stats")
+                    .putExtra(android.content.Intent.EXTRA_TEXT, report + "\n\n" + com.pravahax.portalx.now.NowPilot.csv(events))
+                runCatching { c.startActivity(android.content.Intent.createChooser(send, "Share pilot stats")) }
+            }) { Text("Share") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
 }

@@ -85,10 +85,11 @@ fun HomeScreen(user: SessionUser, navigate: (String) -> Unit) {
                     meetings.data.orEmpty(), tasks.data.orEmpty(), leave.data, cal.data, approvals,
                     user.canApproveLeave || user.canApproveCorrections,
                 )
+                com.pravahax.portalx.now.NowPilot.attendance(ctx)
                 com.pravahax.portalx.now.NowEngine.evaluate(ctx, snoozedUntil = com.pravahax.portalx.now.NowSnoozes.snapshot())
             }
             NowCard(result, today.initialLoading, navigate, refresh = { today.refresh() }, onSnooze = { shown ->
-                com.pravahax.portalx.now.NowSnoozes.snooze(shown); snoozeTick++
+                com.pravahax.portalx.now.NowSnoozes.snooze(shown); com.pravahax.portalx.now.NowPilot.snoozed(shown); snoozeTick++
             })
         }
 

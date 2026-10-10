@@ -54,6 +54,7 @@ fun NowCard(result: NowResult?, loading: Boolean, navigate: (String) -> Unit, re
             return@SectionCard
         }
         val c = policy.choose(result, System.currentTimeMillis())
+        LaunchedEffect(c.key) { NowPilot.shown(c, "home") }
         Row(verticalAlignment = Alignment.CenterVertically) {
             CircleIcon(iconFor(c), if (c.band <= Band.TimeCritical) p.warning else MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(Space.md))
@@ -67,13 +68,13 @@ fun NowCard(result: NowResult?, loading: Boolean, navigate: (String) -> Unit, re
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
             val label = c.actionLabel
             when (val a = c.action) {
-                is NowAction.Open -> if (label != null) Button(onClick = { navigate(a.route) }, shape = MaterialTheme.shapes.medium) { Text(label) }
-                NowAction.Refresh -> Button(onClick = refresh, shape = MaterialTheme.shapes.medium) { Text(label ?: "Refresh") }
+                is NowAction.Open -> if (label != null) Button(onClick = { NowPilot.tapped(c, "home"); navigate(a.route) }, shape = MaterialTheme.shapes.medium) { Text(label) }
+                NowAction.Refresh -> Button(onClick = { NowPilot.tapped(c, "home"); refresh() }, shape = MaterialTheme.shapes.medium) { Text(label ?: "Refresh") }
                 NowAction.None -> {}
             }
             Spacer(Modifier.weight(1f))
             if (c.ruleId != "workday.clear") TextButton(onClick = { onSnooze(c) }) { Text("Not now") }
-            TextButton(onClick = { why = true }) { Text("Why this?") }
+            TextButton(onClick = { NowPilot.why(c); why = true }) { Text("Why this?") }
         }
     }
     if (why) ModalBottomSheet(onDismissRequest = { why = false }, containerColor = MaterialTheme.colorScheme.surface) {

@@ -45,6 +45,7 @@ class TodayWidget : AppWidgetProvider() {
             val s = try { (ctx.applicationContext as? RepoHost)?.repo?.let { summary(it) } } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
                 ?: WidgetSummary.signedOut
             val open = Intent(ctx, MainActivity::class.java).putExtra(Push.EXTRA_ROUTE, s.route).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            s.nowKey?.let { open.putExtra(Push.EXTRA_SRC, "widget:$it"); com.pravahax.portalx.now.NowPilot.record("shown", it, "widget") }
             val pi = PendingIntent.getActivity(ctx, 7001, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val views = RemoteViews(ctx.packageName, R.layout.widget_today).apply {
                 setTextViewText(R.id.widget_headline, s.headline)
@@ -83,7 +84,7 @@ class TodayWidget : AppWidgetProvider() {
 }
 
 /** What the widget says. Pure, so it is unit-tested without a launcher. */
-data class WidgetSummary(val headline: String, val detail: String, val route: String, val now: String? = null) {
+data class WidgetSummary(val headline: String, val detail: String, val route: String, val now: String? = null, val nowKey: String? = null) {
     companion object {
         val signedOut = WidgetSummary("Sign in to PortalX", "Your day at a glance", "home")
 
@@ -108,7 +109,8 @@ data class WidgetSummary(val headline: String, val detail: String, val route: St
             val act = (now?.action as? com.pravahax.portalx.now.NowAction.Open)?.route?.let(Push::safeRoute)
             val line = now?.takeIf { !stale && today != null && it.action != com.pravahax.portalx.now.NowAction.None }
                 ?.let { "Now: " + it.title + if (it.detail.isNotBlank()) " · ${it.detail}" else "" }
-            return WidgetSummary(headline, parts.joinToString(" · "), if (line != null && act != null) act else fallback, line)
+            return WidgetSummary(headline, parts.joinToString(" · "), if (line != null && act != null) act else fallback, line,
+                nowKey = if (line != null && act != null) now?.key else null)
         }
     }
 }

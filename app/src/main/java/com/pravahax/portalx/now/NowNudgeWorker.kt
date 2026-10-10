@@ -29,12 +29,14 @@ class NowNudgeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         try {
             if (!repo.api.hasSession()) return Result.success()
             val ctx = context(repo, ZonedDateTime.now(AppZone)) ?: return Result.success()
+            NowPilot.attendance(ctx)
             val prefs = applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val day = ctx.today.toString()
             val sent = prefs.getStringSet(KEY, emptySet()).orEmpty().filter { it.startsWith("$day|") }.toMutableSet()
             NowNudges.due(ctx, sent).forEach { n ->
                 Push.show(applicationContext, PushMessage(n.title, n.body, PushMessage.Channel.Reminders, n.route, "now:${n.key}"))
                 sent += n.key
+                NowPilot.nudge(n.key)
             }
             prefs.edit().putStringSet(KEY, sent).apply() // only today's keys survive: the set never grows
         } catch (e: CancellationException) { throw e } catch (_: Exception) { }
