@@ -29,7 +29,8 @@ class V010NowTest {
         assertEquals("workday.clear", pick(ctx(at(8, 0))).ruleId) // > 60 min early: nothing yet
         pick(ctx(at(9, 0))).let { assertEquals("attendance.check-in-required", it.ruleId); assertEquals(Band.Due, it.band) }
         pick(ctx(at(10, 5))).let { assertEquals(Band.TimeCritical, it.band); assertEquals(NowAction.Open("attendance"), it.action) }
-        assertEquals("workday.clear", pick(ctx(at(19, 0))).ruleId) // after shift end: don't nag a late check-in at night
+        // v0.10.3: after shift end a missing check-in is no longer silent: offer a correction (Due, not a punch nag)
+        pick(ctx(at(19, 0))).let { assertEquals("attendance.check-in-missed", it.ruleId); assertEquals(Band.Due, it.band) }
     }
 
     @Test fun noCheckInNagOnWeekendHolidayOrLeave() {

@@ -88,6 +88,11 @@ fun HomeScreen(user: SessionUser, navigate: (String) -> Unit) {
                 com.pravahax.portalx.now.NowPilot.attendance(ctx)
                 com.pravahax.portalx.now.NowEngine.evaluate(ctx, snoozedUntil = com.pravahax.portalx.now.NowSnoozes.snapshot())
             }
+            // v0.10.3: whenever attendance or meetings change here (a punch, a break, a new meeting), re-arm NOW's exact alarm.
+            val appCtx = androidx.compose.ui.platform.LocalContext.current
+            LaunchedEffect(today.data, meetings.data) {
+                runCatching { appCtx.sendBroadcast(android.content.Intent("com.pravahax.portalx.NOW_ALARM").setClassName(appCtx.packageName, "com.pravahax.portalx.now.NowAlarmReceiver")) }
+            }
             NowCard(result, today.initialLoading, navigate, refresh = { today.refresh() }, onSnooze = { shown ->
                 com.pravahax.portalx.now.NowSnoozes.snooze(shown); com.pravahax.portalx.now.NowPilot.snoozed(shown); snoozeTick++
             })

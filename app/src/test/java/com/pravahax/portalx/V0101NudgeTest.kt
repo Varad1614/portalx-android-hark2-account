@@ -28,11 +28,12 @@ class V0101NudgeTest {
         assertTrue(NowNudges.due(ctx(at(19, 15), out), emptySet()).isEmpty())
     }
 
-    @Test fun meetingNudgesWithinFifteenMinutesOnce() {
+    @Test fun meetingNudgesWithinTenMinutesOnce() {
         val m = NowMeeting("42", "Design review", at(11, 0), at(11, 30))
         assertTrue(NowNudges.due(ctx(at(10, 40), inAt940, meetings = listOf(m)), emptySet()).isEmpty())
-        val n = NowNudges.due(ctx(at(10, 48), inAt940, meetings = listOf(m)), emptySet()).single()
-        assertEquals("2026-10-09|meeting:42", n.key); assertEquals("Starts in 12 min, at 11:00 AM", n.body); assertEquals("meetings", n.route)
+        assertTrue(NowNudges.due(ctx(at(10, 48), inAt940, meetings = listOf(m)), emptySet()).isEmpty()) // v0.10.3: same 10-min lead as the card
+        val n = NowNudges.due(ctx(at(10, 52), inAt940, meetings = listOf(m)), emptySet()).single()
+        assertEquals("2026-10-09|meeting:42", n.key); assertEquals("Starts in 8 min, at 11:00 AM", n.body); assertEquals("meetings", n.route)
         assertTrue(NowNudges.due(ctx(at(10, 55), inAt940, meetings = listOf(m)), setOf(n.key)).isEmpty())
         assertTrue(NowNudges.due(ctx(at(11, 5), inAt940, meetings = listOf(m)), emptySet()).isEmpty()) // started: no late nudge
     }

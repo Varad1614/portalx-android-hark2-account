@@ -16,6 +16,7 @@ import com.pravahax.portalx.push.Push
 import com.pravahax.portalx.push.PushMessage
 import com.pravahax.portalx.widget.TodayWidget
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.withLock
 import java.time.ZonedDateTime
 import java.util.concurrent.TimeUnit
 
@@ -24,27 +25,39 @@ import java.util.concurrent.TimeUnit
  * and refresh the widget. Attendance is fetched live; if that fails, no punch nudge is sent.
  */
 class NowNudgeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
-    override suspend fun doWork(): Result {
-        val repo = (applicationContext as? RepoHost)?.repo ?: return Result.success()
-        try {
-            if (!repo.api.hasSession()) return Result.success()
-            val ctx = context(repo, ZonedDateTime.now(AppZone)) ?: return Result.success()
-            NowPilot.attendance(ctx)
-            val prefs = applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            val day = ctx.today.toString()
-            val sent = prefs.getStringSet(KEY, emptySet()).orEmpty().filter { it.startsWith("$day|") }.toMutableSet()
-            NowNudges.due(ctx, sent).forEach { n ->
-                Push.show(applicationContext, PushMessage(n.title, n.body, PushMessage.Channel.Reminders, n.route, "now:${n.key}"))
-                sent += n.key
-                NowPilot.nudge(n.key)
-            }
-            prefs.edit().putStringSet(KEY, sent).apply() // only today's keys survive: the set never grows
-        } catch (e: CancellationException) { throw e } catch (_: Exception) { }
-        TodayWidget.refresh(applicationContext)
-        return Result.success()
-    }
+    override suspend fun doWork(): Result { runOnce(applicationContext); return Result.success() }
 
     companion object {
+        private val lock = kotlinx.coroutines.sync.Mutex()
+
+        /**
+         * One NOW pass: rebuild the context (live attendance + meetings), post due nudges once each, refresh the
+         * widget and arm the exact alarm for the next moment. Shared by the 15-min safety-net worker and [NowAlarms].
+         */
+        suspend fun runOnce(app: Context) = lock.withLock {
+            val repo = (app as? RepoHost)?.repo
+            var ctx: WorkdayContext? = null
+            try {
+                if (repo != null && repo.api.hasSession()) {
+                    ctx = context(repo, ZonedDateTime.now(AppZone))
+                    ctx?.let { c ->
+                        NowPilot.attendance(c)
+                        val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                        val day = c.today.toString()
+                        val sent = prefs.getStringSet(KEY, emptySet()).orEmpty().filter { it.startsWith("$day|") }.toMutableSet()
+                        NowNudges.due(c, sent) { NowSnoozes.isSnoozed(it) }.forEach { n ->
+                            Push.show(app, PushMessage(n.title, n.body, PushMessage.Channel.Reminders, n.route, "now:${n.key}", snoozeKey = n.snoozeKey))
+                            sent += n.key
+                            NowPilot.nudge(n.key)
+                        }
+                        prefs.edit().putStringSet(KEY, sent).apply() // only today's keys survive: the set never grows
+                    }
+                }
+            } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+            TodayWidget.refresh(app)
+            if (ctx != null) NowAlarms.arm(app, NowSchedule.next(ctx, NowSnoozes.snapshot())) else NowAlarms.cancel(app)
+        }
+
         private const val NAME = "portalx-now"
         private const val PREFS = "portalx_now"
         private const val KEY = "sent"
@@ -54,7 +67,7 @@ class NowNudgeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
             runCatching { WorkManager.getInstance(context).enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP, req) }
         }
 
-        fun cancel(context: Context) { runCatching { WorkManager.getInstance(context).cancelUniqueWork(NAME) } }
+        fun cancel(context: Context) { runCatching { WorkManager.getInstance(context).cancelUniqueWork(NAME) }; NowAlarms.cancel(context) }
 
         /** Live attendance + meetings when reachable, the rest from cache. Null when signed out. */
         suspend fun context(repo: Repo, now: ZonedDateTime): WorkdayContext? {

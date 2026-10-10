@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- v0.8: push alerts (FCM). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- v0.10.3: NOW reminders on the minute (meeting minus 10, shift start/end). Falls back to inexact without it. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- v0.9: in-app liveness camera (CameraX). -->
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- v0.6: one best-effort fix attached to check-in/out (foreground only, never required). -->
@@ -59,6 +62,17 @@
         <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="general" />
         <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_portalx" />
         <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/brand_gold" />
+        <!-- v0.10.3: exact NOW alarms + notification "Not now" (internal), and re-arming after boot/time changes. -->
+        <receiver android:name=".now.NowAlarmReceiver" android:exported="false" />
+        <receiver android:name=".now.NowBootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
         <!-- v0.8: home-screen widget (reads the on-device cache only). -->
         <receiver android:name=".widget.TodayWidget" android:exported="true" android:label="PortalX Today">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>

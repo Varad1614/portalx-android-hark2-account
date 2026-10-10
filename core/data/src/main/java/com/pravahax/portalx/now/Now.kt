@@ -31,8 +31,14 @@ object NowConfig {
     val checkInLead: Duration = Duration.ofMinutes(60)
     /** After shift end, "check out" is a gentle Due; past this grace it becomes "forgot to check out". */
     val checkOutGrace: Duration = Duration.ofMinutes(30)
-    /** A meeting surfaces this long before it starts. */
+    /** A meeting surfaces this long before it starts: card, widget and notification all use this one number. */
     val meetingLead: Duration = Duration.ofMinutes(10)
+    /** v0.10.3: inside this window a meeting outranks "Check in" (join first, punch right after). */
+    val meetingUrgentLead: Duration = Duration.ofMinutes(3)
+    /** v0.10.3: a second check-in reminder this long after shift start. */
+    val checkInRepeat: Duration = Duration.ofMinutes(15)
+    /** v0.10.3: break reminders at these marks. */
+    val breakAlerts: List<Duration> = listOf(Duration.ofMinutes(45), Duration.ofMinutes(60))
     /** "Not now" hides a candidate for this long. */
     val snooze: Duration = Duration.ofMinutes(30)
     /** A shown recommendation is kept at least this long unless a higher band arrives or it becomes invalid. */
@@ -99,6 +105,8 @@ data class Candidate(
     val action: NowAction,
     /** Acting on stale data could do harm (punching twice): gated by [Freshness]. */
     val requiresLiveAttendance: Boolean = false,
+    /** v0.10.3: a detail that never goes stale (clock times, no countdowns), for the widget. */
+    val glance: String? = null,
 ) {
     val key get() = "$ruleId:$subject"
     val score get() = band.base + urgency.coerceIn(0, 99)
@@ -122,7 +130,8 @@ object Rules {
         val m = a.breakStartedAt?.let { mins(Duration.between(it, c.now)) }?.coerceAtLeast(0)
         Candidate("attendance.break-running", "today", Band.Blocking, (m ?: 0).toInt().coerceAtMost(99),
             "End your break", m?.let { "On break for $it min" } ?: "You're on a break",
-            "A break is running, so worked time isn't counting.", "End break", NowAction.Open("attendance"), requiresLiveAttendance = true)
+            "A break is running, so worked time isn't counting.", "End break", NowAction.Open("attendance"), requiresLiveAttendance = true,
+            glance = a.breakStartedAt?.let { "On break since ${fmt(it)}" })
     }
 
     val checkInRequired = Rule { c ->
@@ -132,12 +141,26 @@ object Rules {
         val start = c.at(c.shift.start); val end = c.at(c.shift.end)
         if (c.now.isBefore(start.minus(NowConfig.checkInLead)) || !c.now.isBefore(end)) return@Rule null
         val late = mins(Duration.between(start, c.now))
+        // v0.10.3: one card for both when a meeting is about to start: "check in, then join".
+        val then = c.meetings.filter { it.start.isAfter(c.now) && !it.start.isAfter(c.now.plus(NowConfig.meetingLead)) }
+            .minByOrNull { it.start }?.let { " · then ${it.title} at ${fmt(it.start)}" } ?: ""
         if (late >= 0) Candidate("attendance.check-in-required", "today", Band.TimeCritical, 85,
-            "Check in", if (late == 0L) "Your shift starts now" else "Your shift started at ${fmt(start)}",
+            "Check in", (if (late == 0L) "Your shift starts now" else "Your shift started at ${fmt(start)}") + then,
             "No check-in yet today, and your shift has started.", "Check in", NowAction.Open("attendance"), requiresLiveAttendance = true)
         else Candidate("attendance.check-in-required", "today", Band.Due, 60,
-            "Check in", "Your shift starts at ${fmt(start)}",
+            "Check in", "Your shift starts at ${fmt(start)}" + then,
             "No check-in yet today, and your shift starts within the hour.", "Check in", NowAction.Open("attendance"), requiresLiveAttendance = true)
+    }
+
+    /** v0.10.3: the shift ended with no check-in. Never go silent: offer a correction for the day. */
+    val checkInMissed = Rule { c ->
+        if (!c.isWorkDay) return@Rule null
+        val a = c.attendance ?: return@Rule null
+        if (a.checkIn != null || c.now.isBefore(c.at(c.shift.end))) return@Rule null
+        val d = c.today.format(java.time.format.DateTimeFormatter.ofPattern("d MMM", java.util.Locale.ENGLISH))
+        Candidate("attendance.check-in-missed", "today", Band.Due, 58, "No check-in today",
+            "Request a correction for $d", "Your shift ended and there's no check-in for today, so the day would count as absent.",
+            "Request correction", NowAction.Open("attendance"), requiresLiveAttendance = true)
     }
 
     val checkOut = Rule { c ->
@@ -159,16 +182,21 @@ object Rules {
         val m = c.meetings.filter { !c.now.isBefore(it.start) && (it.end?.let { e -> c.now.isBefore(e) } ?: (mins(Duration.between(it.start, c.now)) < 30)) }
             .minByOrNull { it.start } ?: return@Rule null
         Candidate("meeting.current", m.key, Band.TimeCritical, 95, m.title, "Started at ${fmt(m.start)}",
-            "This meeting is happening now.", "Open meeting", NowAction.Open("meetings"))
+            "This meeting is happening now.", "Open meeting", NowAction.Open("meetings"), glance = "Started at ${fmt(m.start)}")
     }
 
     val meetingSoon = Rule { c ->
         val m = c.meetings.filter { it.start.isAfter(c.now) && !it.start.isAfter(c.now.plus(NowConfig.meetingLead)) }
             .minByOrNull { it.start } ?: return@Rule null
         val left = mins(Duration.between(c.now, m.start)).coerceAtLeast(0)
-        Candidate("meeting.starting-soon", m.key, Band.TimeCritical, (70 + (10 - left) * 2).toInt().coerceIn(70, 90),
-            m.title, "Starts ${inMinutes(left)}, at ${fmt(m.start)}", "A meeting starts within ${mins(NowConfig.meetingLead)} minutes.",
-            "Open meeting", NowAction.Open("meetings"))
+        // v0.10.3: below 70..84 "Check in" (85) wins; inside the last 3 minutes the meeting wins (88..91), never above a live one (95).
+        val urgency = if (left <= mins(NowConfig.meetingUrgentLead)) (88 + (mins(NowConfig.meetingUrgentLead) - left)).toInt()
+            else (70 + (mins(NowConfig.meetingLead) - left) * 2).toInt().coerceIn(70, 84)
+        val notIn = c.isWorkDay && c.attendance != null && c.attendance.checkIn == null
+        Candidate("meeting.starting-soon", m.key, Band.TimeCritical, urgency,
+            m.title, "Starts ${inMinutes(left)}, at ${fmt(m.start)}" + if (notIn) " · check in right after" else "",
+            "A meeting starts within ${mins(NowConfig.meetingLead)} minutes.",
+            "Open meeting", NowAction.Open("meetings"), glance = "Starts at ${fmt(m.start)}")
     }
 
     private fun high(p: String?) = p?.lowercase() in setOf("high", "urgent", "critical")
@@ -218,7 +246,7 @@ object Rules {
     }
 
     /** Ordered as documented; evaluation order never affects the result (the resolver sorts). */
-    val catalogue: List<Rule> = listOf(breakRunning, checkInRequired, checkOut, meetingLive, meetingSoon,
+    val catalogue: List<Rule> = listOf(breakRunning, checkInRequired, checkInMissed, checkOut, meetingLive, meetingSoon,
         taskOverdue, taskDueToday, approvalPending, dayOff, dayComplete)
 }
 
@@ -285,10 +313,22 @@ class StabilityPolicy(private val minHoldMs: Long = NowConfig.MIN_HOLD_MS) {
     }
 }
 
-/** "Not now": per rule + subject, in memory for the session (a restart is a fair reason to ask again). */
+/** "Not now": per rule + subject. v0.10.3: saved to a small file so it survives restarts and works from a notification. */
 object NowSnoozes {
     private val until = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    fun snooze(c: Candidate, nowMs: Long = System.currentTimeMillis()) { until[c.key] = nowMs + NowConfig.snooze.toMillis() }
+    @Volatile private var file: java.io.File? = null
+
+    @Synchronized fun init(f: java.io.File, nowMs: Long = System.currentTimeMillis()) {
+        file = f; until.clear()
+        runCatching { if (f.exists()) f.readLines().forEach { l -> l.split('\t').takeIf { it.size == 2 }?.let { (k, v) -> v.toLongOrNull()?.takeIf { it > nowMs }?.let { until[k] = it } } } }
+    }
+    fun snooze(c: Candidate, nowMs: Long = System.currentTimeMillis()) = snooze(c.key, nowMs)
+    @Synchronized fun snooze(key: String, nowMs: Long = System.currentTimeMillis()) {
+        until[key] = nowMs + NowConfig.snooze.toMillis()
+        until.entries.removeIf { it.value <= nowMs }
+        runCatching { file?.writeText(until.entries.joinToString("") { "${it.key}\t${it.value}\n" }) }
+    }
+    fun isSnoozed(key: String, nowMs: Long = System.currentTimeMillis()) = (until[key] ?: 0L) > nowMs
     fun snapshot(): Map<String, Long> = HashMap(until)
-    fun clear() = until.clear()
+    @Synchronized fun clear() { until.clear(); file = null }
 }

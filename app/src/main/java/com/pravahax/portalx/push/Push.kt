@@ -69,6 +69,7 @@ object Push {
             .setSmallIcon(R.drawable.ic_stat_portalx).setColor(0xFFB8832B.toInt())
             .setContentTitle(m.title).setContentText(m.body).setStyle(NotificationCompat.BigTextStyle().bigText(m.body))
             .setAutoCancel(true).setContentIntent(pi)
+            .apply { m.snoozeKey?.let { addAction(0, "Not now", com.pravahax.portalx.now.NowAlarms.snoozeIntent(ctx, it, m.tag)) } }
             // Lock screen shows only "PortalX" until unlocked (names and dates stay private).
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPublicVersion(NotificationCompat.Builder(ctx, m.channel.id).setSmallIcon(R.drawable.ic_stat_portalx).setContentTitle("PortalX").setContentText("New update").build())
@@ -96,7 +97,7 @@ object DeepLink {
  * A gateway push, read from FCM `data` (preferred: `type`, `title`, `body`, optional `route`, `id`) with the
  * `notification` block as a fallback. Returns null when there is nothing to show.
  */
-data class PushMessage(val title: String, val body: String, val channel: Channel, val route: String, val tag: String) {
+data class PushMessage(val title: String, val body: String, val channel: Channel, val route: String, val tag: String, val snoozeKey: String? = null) {
     enum class Channel(val id: String, val title: String) { Approvals("approvals", "Approvals"), Tasks("tasks", "Tasks"), General("general", "Updates"), Reminders("reminders", "Reminders") }
 
     /** Cached screens to re-read next time they are shown. */

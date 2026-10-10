@@ -82,6 +82,10 @@ fun MoreScreen(user: SessionUser, navigate: (String) -> Unit, onLogout: () -> Un
                 if (user.can("performance.read")) HubRow(Icons.Outlined.Insights, "Performance & feedback", "Reviews and peer feedback") { navigate("performance") }
                 if (user.can("teams.read")) HubRow(Icons.Outlined.Diversity3, "Teams", "Leads, managers and members") { navigate("teams") }
                 HubRow(Icons.Outlined.Notifications, "Notifications", "Approvals and updates") { navigate("notifications") }
+                if (android.os.Build.VERSION.SDK_INT >= 31 && ctx.getSystemService(android.app.AlarmManager::class.java)?.canScheduleExactAlarms() == false)
+                    HubRow(Icons.Outlined.Alarm, "Turn on on-time reminders", "Lets meeting and check-in reminders arrive on the minute") {
+                        runCatching { ctx.startActivity(Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${ctx.packageName}"))) }
+                    }
                 HubRow(Icons.Outlined.Analytics, "NOW pilot stats", "How Now suggestions are working for you") { pilot = true }
             }
         }

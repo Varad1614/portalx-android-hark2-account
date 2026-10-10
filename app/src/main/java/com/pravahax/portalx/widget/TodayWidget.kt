@@ -76,7 +76,7 @@ class TodayWidget : AppWidgetProvider() {
                     repo.cachedResponse(Endpoint.MyLeave.fn.name)?.let { com.pravahax.portalx.data.model.LeaveSummary.from(it) },
                     repo.cachedResponse("cal-${java.time.YearMonth.from(Dates.today())}")?.let { com.pravahax.portalx.data.model.CalendarMonth.from(it) },
                     approvals, user.canApproveLeave || user.canApproveCorrections,
-                )).chosen
+                ), snoozedUntil = com.pravahax.portalx.now.NowSnoozes.snapshot()).chosen
             }.getOrNull()
             return WidgetSummary.of(today, tasks.count { !it.done }, approvals, now = now)
         }
@@ -108,7 +108,7 @@ data class WidgetSummary(val headline: String, val detail: String, val route: St
             // Only an actionable NOW candidate earns the line (and the tap target); "nothing urgent" stays quiet.
             val act = (now?.action as? com.pravahax.portalx.now.NowAction.Open)?.route?.let(Push::safeRoute)
             val line = now?.takeIf { !stale && today != null && it.action != com.pravahax.portalx.now.NowAction.None }
-                ?.let { "Now: " + it.title + if (it.detail.isNotBlank()) " · ${it.detail}" else "" }
+                ?.let { c -> val d = c.glance ?: c.detail; "Now: " + c.title + if (d.isNotBlank()) " · $d" else "" }
             return WidgetSummary(headline, parts.joinToString(" · "), if (line != null && act != null) act else fallback, line,
                 nowKey = if (line != null && act != null) now?.key else null)
         }
